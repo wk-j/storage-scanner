@@ -9,8 +9,6 @@ use crate::icons;
 use crate::model::{self, Footer, Readout, State, CARD_H, CARD_W};
 use crate::scan::Cat;
 
-const WIN_W: f32 = 1200.0;
-const WIN_H: f32 = 820.0;
 const PAD_X: f32 = 30.0;
 const HEADER_Y: f32 = 26.0;
 const STATUS_Y: f32 = 78.0;
@@ -18,21 +16,18 @@ const BAR_Y: f32 = 118.0;
 const LEGEND_Y: f32 = 272.0;
 const DIVIDER_Y: f32 = 468.0;
 
-pub fn view(s: &State, cx: &mut Cx<State>) -> El {
-    let [w, h] = cx.layout_size("root").unwrap_or([WIN_W, WIN_H]);
-    let x = ((w - CARD_W) / 2.0).max(24.0);
-    let y = ((h - CARD_H) / 2.0).max(24.0);
-    el().key("root").w_full().h_full().fill(c(0xffffff)).child(card(s).absolute(x, y))
+pub fn view(s: &State, _: &mut Cx<State>) -> El {
+    // The window is the card. A titled window cannot show transparent rounded corners, so the
+    // root is the card color edge to edge.
+    el().key("root").w_full().h_full().fill(c(0x17181b)).child(card(s))
 }
 
 fn card(s: &State) -> El {
     let mut card = el()
         .key("card")
-        .size(CARD_W, CARD_H)
-        .radius(22.0)
+        .w_full()
+        .h_full()
         .fill(c(0x17181b))
-        .border(1.0, ca(0xffffff, 0.08))
-        .shadow(22.0, 48.0, ca(0x000000, 0.28))
         .child(pixels(s))
         .child(header(s))
         .child(status(s))

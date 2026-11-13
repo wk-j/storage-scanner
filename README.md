@@ -2,7 +2,7 @@
 
 ![Apps hovered, scan finished](out/idle-apps.png)
 
-A native disk map, written in Rust with [Rune](https://github.com/anomalyco/rune). Used space is a row of glowing cells, one run per category; free space is the dim grid beside them. Clearing caches or the Trash lifts those cells off the bar.
+A native disk map, written in Rust with [Rune](https://github.com/anomalyco/rune). The window is the card. Used space is a row of glowing cells, one run per category; free space is the dim grid beside them. Clearing caches or the Trash lifts those cells off the bar.
 
 Design reference: [Storage scanner by @kshvbgde](https://x.com/bestsaasdesigns/status/2121105777415090259). The frames it was matched against are in `docs/design/`.
 

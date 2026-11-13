@@ -15,7 +15,7 @@ mod model;
 mod scan;
 mod ui;
 
-use model::State;
+use model::{State, CARD_H, CARD_W};
 use rune::AppSpec;
 
 fn main() {
@@ -34,9 +34,9 @@ fn main() {
             include_bytes!("../assets/IBMPlexMono-Regular.ttf"),
         ],
         families: ("Inter", "IBM Plex Mono"),
-        min_size: Some((860.0, 560.0)),
+        min_size: Some((CARD_W, CARD_H)),
         setup: Some(model::setup),
         poll: Some(model::poll),
-        ..AppSpec::new("Storage Scanner", (1200.0, 820.0), State::new, ui::view)
+        ..AppSpec::new("Storage Scanner", (CARD_W, CARD_H), State::new, ui::view)
     });
 }
