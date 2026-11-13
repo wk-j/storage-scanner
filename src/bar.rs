@@ -185,12 +185,13 @@ fn raster(input: &Input<'_>) -> (u32, u32, Vec<u8>) {
     let g = grid();
 
     fill_round_bar(&mut buf, w, h);
+    paint_bar_outline(&mut buf, w, h);
     for (i, edge) in edges.iter().enumerate() {
         if edge.w < 0.8 {
             continue;
         }
-        let dim = others(input.hover, i);
-        paint_glow(&mut buf, w, h, *edge, TONE[i].glow, lerp(1.0, 0.42, dim));
+        // A soft halo only while this segment is the one under the pointer. Neighbours stay flat.
+        paint_hover_glow(&mut buf, w, h, *edge, TONE[i].glow, input.hover[i]);
     }
     if input.scanning {
         let frontier = edges.iter().fold(INSET, |acc, e| if e.w > 0.4 { e.x + e.w } else { acc });
@@ -199,6 +200,20 @@ fn raster(input: &Input<'_>) -> (u32, u32, Vec<u8>) {
         }
     }
     paint_cells(&mut buf, w, h, &g, &edges, input);
+    // Stronger hovers paint last, so a shared edge takes the hovered colour instead of stacking.
+    let mut order: Vec<usize> = (0..N).collect();
+    order.sort_by(|&a, &b| input.hover[a].total_cmp(&input.hover[b]));
+    for i in order {
+        let edge = edges[i];
+        if edge.w < 0.8 {
+            continue;
+        }
+        let mine = input.hover[i];
+        let tinted = mix(TONE[i].base, [128, 132, 140], 0.62 * (1.0 - mine));
+        let col = mix(tinted, TONE[i].glow, mine);
+        let alpha = lerp(0.22, 0.78, mine);
+        paint_segment_outline(&mut buf, w, h, edge, col, alpha);
+    }
     paint_particles(&mut buf, w, h, input.particles);
     (w, h, buf)
 }
@@ -226,39 +241,87 @@ fn fill_round_bar(buf: &mut [u8], w: u32, h: u32) {
     }
 }
 
-fn paint_glow(buf: &mut [u8], w: u32, h: u32, edge: Edge, color: [u8; 3], gain: f32) {
-    let pad = 20.0;
-    let (x0, y0) = buf_xy(edge.x - pad, -pad);
-    let (x1, y1) = buf_xy(edge.x + edge.w + pad, BAR_H + pad);
-    let (cx, cy) = buf_xy(edge.x + edge.w * 0.5, BAR_H * 0.5);
-    let hx = edge.w * 0.5 * SS as f32;
-    let hy = BAR_H * 0.5 * SS as f32;
-    // Interior cuts stay straight. The outer rim follows the bar's rounded ends.
-    let box_r = (3.0 * SS as f32).min(hx.min(hy));
-    let (bx, by) = buf_xy(BAR_W * 0.5, BAR_H * 0.5);
-    let bhx = BAR_W * 0.5 * SS as f32;
-    let bhy = BAR_H * 0.5 * SS as f32;
-    let bar_r = RADIUS * SS as f32;
-    let (sx0, _) = buf_xy(edge.x - 2.0, 0.0);
-    let (sx1, _) = buf_xy(edge.x + edge.w + 2.0, 0.0);
-    let sigma = 6.2 * SS as f32;
-    let y_lo = (y0.floor() as i32).max(0);
-    let y_hi = (y1.ceil() as i32).min(h as i32);
-    let x_lo = (x0.floor() as i32).max(0);
-    let x_hi = (x1.ceil() as i32).min(w as i32);
-    for y in y_lo..y_hi {
-        for x in x_lo..x_hi {
-            let px = x as f32 + 0.5;
-            let py = y as f32 + 0.5;
-            let d_box = sd_round(px - cx, py - cy, hx, hy, box_r).abs();
-            let d_bar = sd_round(px - bx, py - by, bhx, bhy, bar_r).abs();
-            let on_rim = px >= sx0 && px <= sx1;
-            let d = if on_rim { d_box.min(d_bar) } else { d_box };
-            let g = (-(d * d) / (2.0 * sigma * sigma)).exp() * gain;
-            if g > 0.02 {
-                add_glow(buf, w, x, y, color, g * 0.85);
+/// One-pixel rim of the whole capsule, in a faint neutral colour.
+fn paint_bar_outline(buf: &mut [u8], w: u32, h: u32) {
+    let (bx, by, bhx, bhy, bar_r) = bar_sdf_frame();
+    let pad = 2.0;
+    let (x0, y0) = buf_xy(-pad, -pad);
+    let (x1, y1) = buf_xy(BAR_W + pad, BAR_H + pad);
+    let outer = 1.05 * SS as f32;
+    for y in (y0.floor() as i32).max(0)..(y1.ceil() as i32).min(h as i32) {
+        for x in (x0.floor() as i32).max(0)..(x1.ceil() as i32).min(w as i32) {
+            let d = sd_round(x as f32 + 0.5 - bx, y as f32 + 0.5 - by, bhx, bhy, bar_r);
+            let cov = stroke_cover(d, outer);
+            if cov > 0.04 {
+                blend(buf, w, x, y, [255, 255, 255, (cov * 0.16 * 255.0) as u8]);
             }
         }
+    }
+}
+
+/// A short, faint halo just outside the hovered segment. Non-hovered segments pass `amount` 0.
+fn paint_hover_glow(buf: &mut [u8], w: u32, h: u32, edge: Edge, color: [u8; 3], amount: f32) {
+    if amount < 0.02 {
+        return;
+    }
+    let pad = 8.0;
+    let (x0, y0) = buf_xy(edge.x - pad, -pad);
+    let (x1, y1) = buf_xy(edge.x + edge.w + pad, BAR_H + pad);
+    let sigma = 3.2 * SS as f32;
+    for y in (y0.floor() as i32).max(0)..(y1.ceil() as i32).min(h as i32) {
+        for x in (x0.floor() as i32).max(0)..(x1.ceil() as i32).min(w as i32) {
+            let d = segment_distance(x as f32 + 0.5, y as f32 + 0.5, edge);
+            // Outside the segment only, so the cells stay crisp and the seam does not bloom.
+            if d > 0.3 && d < sigma * 2.6 {
+                let g = (-(d * d) / (2.0 * sigma * sigma)).exp() * 0.48 * amount;
+                if g > 0.015 {
+                    add_glow(buf, w, x, y, color, g);
+                }
+            }
+        }
+    }
+}
+
+/// A hair over one point, in the segment's own colour. Shared edges overwrite instead of adding.
+fn paint_segment_outline(buf: &mut [u8], w: u32, h: u32, edge: Edge, color: [u8; 3], alpha: f32) {
+    let pad = 2.0;
+    let (x0, y0) = buf_xy(edge.x - pad, -pad);
+    let (x1, y1) = buf_xy(edge.x + edge.w + pad, BAR_H + pad);
+    let outer = 0.85 * SS as f32;
+    for y in (y0.floor() as i32).max(0)..(y1.ceil() as i32).min(h as i32) {
+        for x in (x0.floor() as i32).max(0)..(x1.ceil() as i32).min(w as i32) {
+            let d = segment_distance(x as f32 + 0.5, y as f32 + 0.5, edge);
+            let cov = stroke_cover(d, outer);
+            if cov > 0.04 {
+                blend(buf, w, x, y, [color[0], color[1], color[2], (cov * alpha * 255.0) as u8]);
+            }
+        }
+    }
+}
+
+fn bar_sdf_frame() -> (f32, f32, f32, f32, f32) {
+    let (bx, by) = buf_xy(BAR_W * 0.5, BAR_H * 0.5);
+    (bx, by, BAR_W * 0.5 * SS as f32, BAR_H * 0.5 * SS as f32, RADIUS * SS as f32)
+}
+
+/// Signed distance to the segment, clipped to the bar's rounded capsule so the outer ends curve.
+fn segment_distance(px: f32, py: f32, edge: Edge) -> f32 {
+    let (x0, y0) = buf_xy(edge.x, 0.0);
+    let (x1, y1) = buf_xy(edge.x + edge.w, BAR_H);
+    let d_seg = sd_box(px, py, (x0 + x1) * 0.5, (y0 + y1) * 0.5, (x1 - x0) * 0.5, (y1 - y0) * 0.5);
+    let (bx, by, bhx, bhy, bar_r) = bar_sdf_frame();
+    let d_bar = sd_round(px - bx, py - by, bhx, bhy, bar_r);
+    d_seg.max(d_bar)
+}
+
+/// 1 inside the stroke, falling to 0 at `outer` buffer pixels past the edge.
+fn stroke_cover(d: f32, outer: f32) -> f32 {
+    if d < -0.65 {
+        0.0
+    } else if d < 0.0 {
+        1.0
+    } else {
+        (1.0 - d / outer).clamp(0.0, 1.0)
     }
 }
 
@@ -305,7 +368,16 @@ fn paint_cells(buf: &mut [u8], w: u32, h: u32, g: &Grid, edges: &[Edge; N], inpu
                 } else {
                     tone.base
                 };
-                bright = lerp(1.0, 0.58, others(input.hover, i));
+                // Resting segments sit below full colour. The one under the pointer comes up;
+                // the others drop toward the bar colour, which is what the reference does on hover.
+                let mine = input.hover[i];
+                let dim = others(input.hover, i);
+                bright = lerp(lerp(0.82, 0.50, dim), 1.0, mine);
+                // A little grey in the dimmed segments, so they read as the reference's dusty dots.
+                rgb = mix(rgb, [86, 90, 98], 0.16 * dim * (1.0 - mine));
+                if mine > 0.0 {
+                    rgb = mix(rgb, tone.spark, 0.30 * mine);
+                }
                 if input.scanning {
                     let dist = frontier - cx;
                     if (0.0..18.0).contains(&dist) {
@@ -314,8 +386,8 @@ fn paint_cells(buf: &mut [u8], w: u32, h: u32, g: &Grid, edges: &[Edge; N], inpu
                     }
                 }
             }
-            if bright < 1.0 {
-                rgb = [scale(rgb[0], bright), scale(rgb[1], bright), scale(rgb[2], bright)];
+            if bright < 0.999 {
+                rgb = mix([24, 25, 28], rgb, bright);
             }
             let (bx, by) = buf_xy(x, y);
             fill_rect(buf, w, h, bx.round() as i32, by.round() as i32, cw, cw, [rgb[0], rgb[1], rgb[2], 255]);
@@ -353,6 +425,14 @@ fn cat_at(edges: &[Edge; N], x: f32) -> Option<usize> {
     edges.iter().position(|e| e.w > 0.4 && x >= e.x && x < e.x + e.w)
 }
 
+fn sd_box(px: f32, py: f32, cx: f32, cy: f32, hx: f32, hy: f32) -> f32 {
+    let qx = (px - cx).abs() - hx;
+    let qy = (py - cy).abs() - hy;
+    let ax = qx.max(0.0);
+    let ay = qy.max(0.0);
+    qx.max(qy).min(0.0) + (ax * ax + ay * ay).sqrt()
+}
+
 fn sd_round(px: f32, py: f32, hx: f32, hy: f32, r: f32) -> f32 {
     let r = r.min(hx.min(hy));
     let qx = px.abs() - hx + r;
@@ -366,10 +446,6 @@ fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
     let t = t.clamp(0.0, 1.0);
     let m = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
     [m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2])]
-}
-
-fn scale(c: u8, k: f32) -> u8 {
-    (c as f32 * k).round() as u8
 }
 
 fn idx(w: u32, x: i32, y: i32) -> Option<usize> {
@@ -469,5 +545,19 @@ mod tests {
         assert!(free[0] < 90 && free[2] < 90, "free space stays dim: {free:?}");
         let above = sample(28.0, -70.0);
         assert!(above[3] < 8, "far above the bar stays clear: {above:?}");
+
+        let spans = edges(&bytes, CAPACITY);
+        let seam = spans[Cat::Photos.ix()].x + spans[Cat::Photos.ix()].w;
+        let above_seam = sample(seam, -5.0);
+        assert!(above_seam[3] < 16, "a non-hovered boundary does not glow upward: {above_seam:?}");
+        let above_apps = sample(spans[Cat::Apps.ix()].x + 12.0, -4.0);
+        assert!(above_apps[3] < 90, "the hovered halo stays faint: {above_apps:?}");
+        // The top of the bar, on the seam and a few points beside it: a line, not a wide bright band.
+        let on_line = sample(seam, 3.0);
+        let beside = sample(seam + 7.0, 3.0);
+        let line_peak = on_line[0].max(on_line[1]).max(on_line[2]);
+        let beside_peak = beside[0].max(beside[1]).max(beside[2]);
+        assert!(line_peak < 160, "the seam is not a neon strip: {on_line:?}");
+        assert!(beside_peak + 12 < line_peak || beside_peak < 70, "the outline is about a pixel wide: line {on_line:?} beside {beside:?}");
     }
 }
