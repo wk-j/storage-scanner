@@ -1,6 +1,6 @@
 # Storage Scanner
 
-![Apps hovered, scan finished](out/idle-apps.png)
+[![Storage Scanner demo](docs/demo.gif)](docs/demo.mp4)
 
 A native disk map, written in Rust with [Rune](https://github.com/anomalyco/rune). The window is the card. Used space is a row of glowing cells, one run per category; free space is the dim grid beside them. Clearing caches or the Trash lifts those cells off the bar.
 
@@ -22,7 +22,9 @@ cargo run --release -- --demo
 
 On Linux the default is the demo: a fixed 512 GB disk (357.8 GB used) and no deletes. `--real` walks the home directory instead. On macOS and Windows the real walk is the default; `--demo` forces the designed dataset.
 
-In real mode, **Clear caches** and **Empty Trash** ask first. They only delete children of `~/Library/Caches` and `~/.Trash`. A symlink at either root is refused, and symlinks inside are unlinked without following them.
+**Clear caches** and **Empty Trash** ask first. In the demo that only plays the animation. In real mode the same dialog then deletes children of `~/Library/Caches` or `~/.Trash` and nothing else. A symlink at either root is refused, and symlinks inside are unlinked without following them.
+
+The clip above is the demo disk: the scan fills the bar, the pointer tours a few categories, then Clear caches and Empty Trash each ask before the cells break away. `scripts/render-demo.sh` records it with the headless renderer (`--demo --script scripts/demo.json --video`). The GIF plays in the README; [docs/demo.mp4](docs/demo.mp4) is the H.264 copy.
 
 ## Screenshots
 

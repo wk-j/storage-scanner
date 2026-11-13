@@ -1,7 +1,7 @@
 //! The single card: total, scanning line, dot-matrix bar, legend, and the clear action.
 
 use rune::color::Color;
-use rune::{Cursor, Cx, El, TextStyle, col, el, row, spacer, text};
+use rune::{Cursor, Cx, El, Shape, TextStyle, col, el, row, spacer, text};
 
 use crate::bar;
 use crate::demo;
@@ -19,7 +19,9 @@ const DIVIDER_Y: f32 = 468.0;
 pub fn view(s: &State, _: &mut Cx<State>) -> El {
     // The window is the card. A titled window cannot show transparent rounded corners, so the
     // root is the card color edge to edge.
-    el().key("root").w_full().h_full().fill(c(0x17181b)).child(card(s))
+    el().key("root").w_full().h_full().fill(c(0x17181b))
+        .on_pointer_move(|st: &mut State, p| model::set_pointer(st, p.x, p.y))
+        .child(card(s))
 }
 
 fn card(s: &State) -> El {
@@ -38,7 +40,30 @@ fn card(s: &State) -> El {
     if s.confirm.is_some() {
         card = card.child(confirm(s));
     }
+    if rune::is_headless() {
+        if let Some((x, y)) = s.pointer {
+            card = card.child(cursor_at(x, y));
+        }
+    }
     card
+}
+
+/// A small arrow for scripted headless frames. The system pointer covers the live window.
+fn cursor_at(x: f32, y: f32) -> El {
+    let arrow = |o: f32| -> Vec<[f32; 2]> {
+        vec![
+            [1.0 + o, 1.0 + o],
+            [1.0 + o, 17.0 + o],
+            [5.2 + o, 13.2 + o],
+            [8.4 + o, 20.2 + o],
+            [11.2 + o, 18.8 + o],
+            [7.8 + o, 12.0 + o],
+            [13.4 + o, 11.6 + o],
+        ]
+    };
+    el().absolute(x, y).size(16.0, 22.0).shape(
+        Shape::new().fill(arrow(0.8), c(0x111214)).fill(arrow(0.0), c(0xf4f5f7)),
+    )
 }
 
 fn pixels(s: &State) -> El {

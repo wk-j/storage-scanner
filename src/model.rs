@@ -168,6 +168,8 @@ pub struct State {
     pub live: [f64; N],
     pub capacity: f64,
     pub hover: Option<Cat>,
+    /// Window-point pointer, so headless frames can draw a cursor. The live window keeps the system pointer.
+    pub pointer: Option<(f32, f32)>,
     /// Smoothed 0..1 hover for each category. The legend and the bar read this, not the raw pointer.
     pub hover_amt: [f32; N],
     hover_from: [f32; N],
@@ -207,6 +209,7 @@ impl State {
             live: [0.0; N],
             capacity: if demo { demo::CAPACITY } else { 0.0 },
             hover: None,
+            pointer: None,
             hover_amt: [0.0; N],
             hover_from: [0.0; N],
             hover_goal: [0.0; N],
@@ -277,6 +280,10 @@ pub fn setup(s: &mut State, waker: Waker) {
     }
 }
 
+pub fn set_pointer(s: &mut State, x: f32, y: f32) {
+    s.pointer = Some((x, y));
+}
+
 pub fn set_hover(s: &mut State, cat: Cat, inside: bool) {
     if inside {
         s.hover = Some(cat);
@@ -325,25 +332,18 @@ pub fn press_rescan(s: &mut State) {
 }
 
 pub fn press_clear(s: &mut State) {
-    if s.scanning || s.clear_origin.is_some() || s.footer != Footer::Caches {
+    if s.scanning || s.clear_origin.is_some() || s.confirm.is_some() || s.footer != Footer::Caches {
         return;
     }
-    if s.demo {
-        begin_anim(s, Purge::Caches);
-    } else {
-        s.confirm = Some(Purge::Caches);
-    }
+    // Demo confirms too, then only plays the animation. Real mode deletes after the same dialog.
+    s.confirm = Some(Purge::Caches);
 }
 
 pub fn press_trash(s: &mut State) {
-    if s.scanning || s.trash_origin.is_some() || s.footer != Footer::Trash {
+    if s.scanning || s.trash_origin.is_some() || s.confirm.is_some() || s.footer != Footer::Trash {
         return;
     }
-    if s.demo {
-        begin_anim(s, Purge::Trash);
-    } else {
-        s.confirm = Some(Purge::Trash);
-    }
+    s.confirm = Some(Purge::Trash);
 }
 
 pub fn press_cancel(s: &mut State) {
