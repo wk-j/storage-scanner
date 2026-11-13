@@ -1,0 +1,31 @@
+[package]
+name = "storage-scanner"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Storage Scanner, a native disk map"
+
+[dependencies]
+libc = "0.2"
+# Rune is pre-release: pin a `dev` rev (dev is never rewritten).
+rune = { git = "https://github.com/anomalyco/rune", rev = "8ee30954add065098f043335ece9d9ea0914d21d" }
+# Same rev as Rune. The compositor can hand rune-fx Rune's wgpu device.
+rune-fx = { git = "https://github.com/anomalyco/rune", rev = "8ee30954add065098f043335ece9d9ea0914d21d" }
+# Same wgpu major and backends as Rune.
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "metal", "wgsl"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["vulkan", "dx12"] }
+
+# Same as Rune's workspace: no debuginfo for dependencies keeps debug builds small.
+[profile.dev.package."*"]
+debug = false
+
+# rune-fx and wgpu are pinned to Rune's stack (as in ui-lab) so a custom pass can share the
+# device later. This app draws the bar on the CPU, so those crates are not named in the source.
+[lints.cargo]
+unused_dependencies = "allow"
+
+[profile.release]
+codegen-units = 16
+incremental = true

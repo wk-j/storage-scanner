@@ -1,0 +1,356 @@
+//! App state. Demo numbers are a function of the clock; a real scan arrives from a background walk.
+//! Clearing in demo mode only changes those numbers. The delete path is never called unless the
+//! user confirms, and then only for `~/Library/Caches` or `~/.Trash`.
+
+use std::sync::Arc;
+
+use rune::{Pixels, Tx, Waker};
+
+use crate::bar::{self, Particle};
+use crate::demo::{self, Activity};
+use crate::scan::{self, Cat, N, Purge, Shared, Snap, Stat};
+
+pub const CARD_W: f32 = 960.0;
+pub const CARD_H: f32 = 540.0;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Readout {
+    Calculating(String),
+    Clearing(String),
+    Emptying(String),
+    Hover,
+    Quiet,
+    Notice(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Footer {
+    Scanning,
+    Caches,
+    Trash,
+    Done,
+}
+
+pub struct State {
+    pub t: f64,
+    pub demo: bool,
+    pub live: [f64; N],
+    pub capacity: f64,
+    pub hover: Option<Cat>,
+    pub readout: Readout,
+    pub footer: Footer,
+    pub confirm: Option<Purge>,
+    pub notice: Option<String>,
+    pub held_caches: f64,
+    pub held_trash: f64,
+    pub pixels: Pixels,
+    pub stats: [Stat; N],
+    pub scanning: bool,
+    scan_epoch: f64,
+    pin_scan: Option<f64>,
+    clear_origin: Option<f64>,
+    trash_origin: Option<f64>,
+    settled: bool,
+    real_done: bool,
+    real_path: String,
+    sig: u64,
+    particles: Vec<Particle>,
+    prev_edges: Option<[bar::Edge; N]>,
+    shared: Arc<Shared>,
+    waker: Option<Waker>,
+}
+
+impl State {
+    pub fn new() -> Self {
+        let demo = demo_mode();
+        State {
+            t: 0.0,
+            demo,
+            live: [0.0; N],
+            capacity: if demo { demo::CAPACITY } else { 0.0 },
+            hover: None,
+            readout: Readout::Quiet,
+            footer: Footer::Scanning,
+            confirm: None,
+            notice: None,
+            held_caches: if demo { demo::TOTALS[Cat::Caches.ix()] } else { 0.0 },
+            held_trash: if demo { demo::TOTALS[Cat::Trash.ix()] } else { 0.0 },
+            pixels: Pixels::new(),
+            stats: std::array::from_fn(|_| Stat::default()),
+            scanning: true,
+            scan_epoch: 0.0,
+            pin_scan: None,
+            clear_origin: None,
+            trash_origin: None,
+            settled: false,
+            real_done: false,
+            real_path: String::new(),
+            sig: 0,
+            particles: Vec::new(),
+            prev_edges: None,
+            shared: Arc::new(Shared::new()),
+            waker: None,
+        }
+    }
+
+    pub fn scene_scanning(&mut self) {
+        self.pin_scan = Some(5.5);
+    }
+
+    pub fn scene_idle(&mut self) {
+        self.pin_scan = Some(99.0);
+        self.hover = Some(Cat::Apps);
+    }
+
+    pub fn scene_clearing(&mut self) {
+        self.pin_scan = Some(99.0);
+        self.clear_origin = Some(0.0);
+    }
+
+    pub fn scene_emptied(&mut self) {
+        self.pin_scan = Some(99.0);
+        self.settled = true;
+    }
+}
+
+pub fn demo_mode() -> bool {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--real") {
+        return false;
+    }
+    args.iter().any(|a| a == "--demo") || cfg!(target_os = "linux")
+}
+
+pub fn setup(s: &mut State, waker: Waker) {
+    s.waker = Some(waker.clone());
+    if !s.demo {
+        scan::spawn(s.shared.clone(), waker);
+    }
+}
+
+pub fn set_hover(s: &mut State, cat: Cat, inside: bool) {
+    if inside {
+        s.hover = Some(cat);
+    } else if s.hover == Some(cat) {
+        s.hover = None;
+    }
+}
+
+pub fn press_rescan(s: &mut State) {
+    s.scan_epoch = s.t;
+    s.pin_scan = None;
+    s.clear_origin = None;
+    s.trash_origin = None;
+    s.settled = false;
+    s.hover = None;
+    s.confirm = None;
+    s.notice = None;
+    s.particles.clear();
+    s.prev_edges = None;
+    s.sig = 0;
+    s.real_done = false;
+    if s.demo {
+        s.held_caches = demo::TOTALS[Cat::Caches.ix()];
+        s.held_trash = demo::TOTALS[Cat::Trash.ix()];
+    } else if let Some(waker) = s.waker.clone() {
+        s.held_caches = 0.0;
+        s.held_trash = 0.0;
+        scan::spawn(s.shared.clone(), waker);
+    }
+}
+
+pub fn press_clear(s: &mut State) {
+    if s.scanning || s.clear_origin.is_some() || s.footer != Footer::Caches {
+        return;
+    }
+    if s.demo {
+        begin_anim(s, Purge::Caches);
+    } else {
+        s.confirm = Some(Purge::Caches);
+    }
+}
+
+pub fn press_trash(s: &mut State) {
+    if s.scanning || s.trash_origin.is_some() || s.footer != Footer::Trash {
+        return;
+    }
+    if s.demo {
+        begin_anim(s, Purge::Trash);
+    } else {
+        s.confirm = Some(Purge::Trash);
+    }
+}
+
+pub fn press_cancel(s: &mut State) {
+    s.confirm = None;
+}
+
+/// Confirmed delete. Demo mode never reaches this; it animates without touching disk.
+pub fn press_confirm(s: &mut State) {
+    let Some(which) = s.confirm.take() else { return };
+    if s.demo {
+        begin_anim(s, which);
+        return;
+    }
+    let Some(home) = scan::home_dir() else {
+        s.notice = Some("No home directory, so nothing was deleted.".into());
+        return;
+    };
+    match scan::purge(&home, which) {
+        Ok(freed) => {
+            scan::note_purged(&s.shared, which.cat(), freed);
+            begin_anim(s, which);
+        }
+        Err(err) => s.notice = Some(err),
+    }
+}
+
+fn begin_anim(s: &mut State, which: Purge) {
+    match which {
+        Purge::Caches => {
+            s.held_caches = s.live[Cat::Caches.ix()].max(s.held_caches);
+            s.clear_origin = Some(s.t);
+        }
+        Purge::Trash => {
+            s.held_trash = s.live[Cat::Trash.ix()].max(s.held_trash);
+            s.trash_origin = Some(s.t);
+        }
+    }
+}
+
+pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
+    let dt = (t - s.t).max(0.0);
+    s.t = t;
+    // The bar and the figures are sampled from the clock. Layout springs would trail them.
+    tx.instant();
+
+    let scan_t = s.pin_scan.unwrap_or_else(|| (s.t - s.scan_epoch).max(0.0));
+    let clear_age = s.clear_origin.map(|t0| (s.t - t0).max(0.0));
+    let trash_age = s.trash_origin.map(|t0| (s.t - t0).max(0.0));
+
+    let mut drift = false;
+    if s.demo {
+        s.live = demo::bytes(scan_t, clear_age, trash_age, s.settled);
+        s.capacity = demo::CAPACITY;
+        s.scanning = demo::scanning(scan_t) && !s.settled;
+    } else {
+        let snap = s.shared.snap.lock().expect("scan lock").clone();
+        apply_real(s, &snap, clear_age, trash_age, dt, &mut drift);
+    }
+
+    if !s.scanning && s.clear_origin.is_none() {
+        s.held_caches = s.live[Cat::Caches.ix()];
+    }
+    if !s.scanning && s.trash_origin.is_none() {
+        s.held_trash = s.live[Cat::Trash.ix()];
+    }
+
+    s.footer = footer(s.scanning, &s.live, clear_age, trash_age, s.settled);
+    s.readout = readout(s, scan_t, clear_age, trash_age);
+
+    let dissolving = if clear_age.is_some_and(|age| age < demo::CLEAR_DUR) {
+        Some(Cat::Caches.ix())
+    } else if trash_age.is_some_and(|age| age < demo::CLEAR_DUR) {
+        Some(Cat::Trash.ix())
+    } else {
+        None
+    };
+    let edges = bar::edges(&s.live, s.capacity);
+    bar::advance(&mut s.particles, &mut s.prev_edges, &edges, dissolving, dt as f32);
+    let hover = s.hover.map(|c| c.ix());
+    bar::render(
+        &s.pixels,
+        &mut s.sig,
+        &bar::Input { bytes: &s.live, capacity: s.capacity, hover, scanning: s.scanning, particles: &s.particles },
+    );
+
+    let clearing = clear_age.is_some_and(|age| age < demo::CLEAR_DUR + 0.15);
+    let emptying = trash_age.is_some_and(|age| age < demo::CLEAR_DUR + 0.15);
+    s.scanning || clearing || emptying || !s.particles.is_empty() || drift || (!s.demo && !s.real_done)
+}
+
+fn apply_real(s: &mut State, snap: &Snap, clear_age: Option<f64>, trash_age: Option<f64>, dt: f64, drift: &mut bool) {
+    if snap.capacity > 0 {
+        s.capacity = snap.capacity as f64;
+    }
+    s.stats = snap.stats.clone();
+    s.real_done = snap.done;
+    s.real_path = snap.path.clone();
+    if s.notice.is_none() {
+        s.notice = snap.error.clone();
+    }
+    s.scanning = !snap.done;
+    let mut target = [0.0; N];
+    for i in 0..N {
+        target[i] = snap.bytes[i] as f64;
+    }
+    if let Some(age) = clear_age.filter(|age| *age < demo::CLEAR_DUR) {
+        target[Cat::Caches.ix()] = s.held_caches * (1.0 - demo::ease(age / demo::CLEAR_DUR));
+    }
+    if let Some(age) = trash_age.filter(|age| *age < demo::CLEAR_DUR) {
+        target[Cat::Trash.ix()] = s.held_trash * (1.0 - demo::ease(age / demo::CLEAR_DUR));
+    }
+    for i in 0..N {
+        let next = smooth(s.live[i], target[i], dt);
+        if (next - target[i]).abs() > 2.0e7 {
+            *drift = true;
+        }
+        s.live[i] = next;
+    }
+}
+
+fn smooth(cur: f64, target: f64, dt: f64) -> f64 {
+    if dt <= 0.0 {
+        return cur;
+    }
+    let k = 1.0 - (-dt / 0.42).exp();
+    cur + (target - cur) * k
+}
+
+fn footer(scanning: bool, live: &[f64; N], clear_age: Option<f64>, trash_age: Option<f64>, settled: bool) -> Footer {
+    if scanning {
+        return Footer::Scanning;
+    }
+    if settled {
+        return Footer::Done;
+    }
+    if clear_age.is_some_and(|age| age < demo::CLEAR_DUR) {
+        return Footer::Caches;
+    }
+    if trash_age.is_some_and(|age| age < demo::CLEAR_DUR) {
+        return Footer::Trash;
+    }
+    if live[Cat::Caches.ix()] > 0.2 * demo::GB && clear_age.is_none() {
+        return Footer::Caches;
+    }
+    if live[Cat::Trash.ix()] > 0.2 * demo::GB {
+        return Footer::Trash;
+    }
+    Footer::Done
+}
+
+fn readout(s: &State, scan_t: f64, clear_age: Option<f64>, trash_age: Option<f64>) -> Readout {
+    if let Some(msg) = &s.notice {
+        return Readout::Notice(msg.clone());
+    }
+    if s.demo {
+        return match demo::activity(scan_t, clear_age, trash_age) {
+            Some((Activity::Calculating, path)) => Readout::Calculating(path.into()),
+            Some((Activity::Clearing, path)) => Readout::Clearing(path.into()),
+            Some((Activity::Emptying, path)) => Readout::Emptying(path.into()),
+            None if s.hover.is_some() => Readout::Hover,
+            None => Readout::Quiet,
+        };
+    }
+    if s.scanning {
+        let path = if s.real_path.is_empty() { "Starting…".into() } else { s.real_path.clone() };
+        return Readout::Calculating(path);
+    }
+    if clear_age.is_some_and(|age| age < demo::CLEAR_DUR) {
+        return Readout::Clearing("~/Library/Caches".into());
+    }
+    if trash_age.is_some_and(|age| age < demo::CLEAR_DUR) {
+        return Readout::Emptying("~/.Trash".into());
+    }
+    if s.hover.is_some() { Readout::Hover } else { Readout::Quiet }
+}
