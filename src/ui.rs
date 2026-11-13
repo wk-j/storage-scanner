@@ -6,7 +6,7 @@ use rune::{Cursor, Cx, El, TextStyle, col, el, row, spacer, text};
 use crate::bar;
 use crate::demo;
 use crate::icons;
-use crate::model::{self, Footer, Readout, State, CARD_H, CARD_W};
+use crate::model::{self, Crossfade, Footer, FooterSnap, State, StatusId, StatusSnap, CARD_H, CARD_W};
 use crate::scan::Cat;
 
 const PAD_X: f32 = 30.0;
@@ -87,40 +87,26 @@ fn header(s: &State) -> El {
 }
 
 fn status(s: &State) -> El {
-    let line = match &s.readout {
-        Readout::Calculating(path) => verb("Calculating", path),
-        Readout::Clearing(path) => verb("Clearing caches", path),
-        Readout::Emptying(path) => verb("Emptying the Trash", path),
-        Readout::Notice(msg) => row().w_full().h(24.0).center_y().child(label(msg, 13.5, 500.0, 0xe7b4ae)),
-        Readout::Quiet => row().w_full().h(24.0).center_y().child(label(
-            "Hover a category to see what's using space.",
-            13.5,
-            450.0,
-            0x8e9099,
-        )),
-        Readout::Hover => hover_line(s),
-    };
-    line.absolute(PAD_X, STATUS_Y).size(bar::BAR_W, 24.0)
+    let slot = el().absolute(PAD_X, STATUS_Y).size(bar::BAR_W, 28.0);
+    stack(slot, &s.status_fade, bar::BAR_W, 24.0, status_line)
 }
 
-fn verb(name: &str, path: &str) -> El {
-    row().w_full().h(24.0).gap(8.0).center_y()
-        .child(label(name, 13.5, 560.0, 0xc8cad1))
-        .child(text(path).font(TextStyle::new(13.0, 450.0).mono()).color(c(0x8b8d96)))
-}
-
-fn hover_line(s: &State) -> El {
-    let cat = s.hover.unwrap_or(Cat::Apps);
-    let sentence = if s.demo {
-        demo::blurb(cat).to_string()
-    } else {
-        crate::scan::blurb(cat, &s.stats[cat.ix()])
-    };
-    row().w_full().h(24.0).gap(8.0).center_y()
-        .child(icons::category(cat, 14.0))
-        .child(label(cat.name(), 13.5, 650.0, 0xf4f5f7))
-        .child(label(format!("{} GB", demo::fmt_gb(s.live[cat.ix()])), 13.5, 500.0, 0xb4b6be))
-        .child(label(sentence, 13.5, 450.0, 0x8e9099).shrink())
+fn status_line(snap: &StatusSnap) -> El {
+    match snap.id {
+        StatusId::Quiet => row().size(bar::BAR_W, 24.0).center_y().child(label(&snap.title, 13.5, 450.0, 0x8e9099)),
+        StatusId::Notice => row().size(bar::BAR_W, 24.0).center_y().child(label(&snap.title, 13.5, 500.0, 0xe7b4ae)),
+        StatusId::Calculating | StatusId::Clearing | StatusId::Emptying => row().size(bar::BAR_W, 24.0).gap(8.0).center_y()
+            .child(label(&snap.title, 13.5, 560.0, 0xc8cad1))
+            .child(text(snap.detail.clone()).font(TextStyle::new(13.0, 450.0).mono()).color(c(0x8b8d96))),
+        StatusId::Hover(_) => {
+            let cat = snap.cat.unwrap_or(Cat::Apps);
+            row().size(bar::BAR_W, 24.0).gap(8.0).center_y()
+                .child(icons::category(cat, 14.0))
+                .child(label(&snap.title, 13.5, 650.0, 0xf4f5f7))
+                .child(label(&snap.detail, 13.5, 500.0, 0xb4b6be))
+                .child(label(&snap.blurb, 13.5, 450.0, 0x8e9099).shrink())
+        }
+    }
 }
 
 fn legend(s: &State) -> El {
@@ -157,42 +143,45 @@ fn cell(s: &State, cat: Cat) -> El {
 
 fn footer(s: &State) -> El {
     let h = CARD_H - DIVIDER_Y - 1.0;
-    let mut line = row().absolute(0.0, DIVIDER_Y + 1.0).size(CARD_W, h).px(PAD_X).gap(12.0).center_y();
-    line = match s.footer {
-        Footer::Scanning => line
-            .child(icons::sparkle(15.0, 0x9aa0aa))
-            .child(label("Looking for things you can clear", 13.5, 450.0, 0x9a9ca6)),
-        Footer::Caches => line
-            .child(icons::category(Cat::Caches, 16.0))
-            .child(label(
-                format!(
-                    "Caches are using {} GB. Apps rebuild them when they need them.",
-                    demo::fmt_gb(s.held_caches)
-                ),
-                13.5,
-                450.0,
-                0xb7b9c0,
-            ).shrink())
-            .child(spacer())
-            .child(action("clear-caches", "Clear caches", model::press_clear)),
-        Footer::Trash => line
-            .child(icons::category(Cat::Trash, 16.0))
-            .child(label(
-                format!(
-                    "The Trash is holding {} GB of things you've already deleted.",
-                    demo::fmt_gb(s.held_trash)
-                ),
-                13.5,
-                450.0,
-                0xb7b9c0,
-            ).shrink())
-            .child(spacer())
-            .child(action("empty-trash", "Empty Trash", model::press_trash)),
-        Footer::Done => line
-            .child(icons::sparkle(15.0, 0x8fd9b0))
-            .child(label("Caches and the Trash are clear.", 13.5, 450.0, 0x9a9ca6)),
+    let slot = el().absolute(0.0, DIVIDER_Y + 1.0).size(CARD_W, h);
+    stack(slot, &s.footer_fade, CARD_W, h, footer_line)
+}
+
+fn footer_line(snap: &FooterSnap) -> El {
+    let icon = match snap.kind {
+        Footer::Scanning => icons::sparkle(15.0, 0x9aa0aa),
+        Footer::Caches => icons::category(Cat::Caches, 16.0),
+        Footer::Trash => icons::category(Cat::Trash, 16.0),
+        Footer::Done => icons::sparkle(15.0, 0x8fd9b0),
     };
+    let mut line = row().size(CARD_W, CARD_H - DIVIDER_Y - 1.0).px(PAD_X).gap(12.0).center_y()
+        .child(icon)
+        .child(label(&snap.message, 13.5, 450.0, if snap.kind == Footer::Scanning || snap.kind == Footer::Done { 0x9a9ca6 } else { 0xb7b9c0 }).shrink());
+    if let Some(name) = snap.button {
+        let press = if name == "Empty Trash" { model::press_trash } else { model::press_clear };
+        let key = if name == "Empty Trash" { "empty-trash" } else { "clear-caches" };
+        line = line.child(spacer()).child(action(key, name, press));
+    }
     line
+}
+
+/// Overlapping copies of a line. The outgoing one rises a few pixels as it fades; the incoming one settles down into place.
+fn stack<T: Clone>(host: El, fade: &Crossfade<T>, _w: f32, _h: f32, draw: fn(&T) -> El) -> El {
+    if let Some(inc) = &fade.incoming {
+        let (inc_dy, base_dy) = fade.slide();
+        let base_op = (1.0 - fade.mix).clamp(0.0, 1.0);
+        let inc_op = fade.mix.clamp(0.0, 1.0);
+        // The clearer copy is painted last so it keeps the clicks.
+        if inc_op >= base_op {
+            host.child(draw(&fade.base).opacity(base_op).absolute(0.0, base_dy))
+                .child(draw(inc).opacity(inc_op).absolute(0.0, inc_dy))
+        } else {
+            host.child(draw(inc).opacity(inc_op).absolute(0.0, inc_dy))
+                .child(draw(&fade.base).opacity(base_op).absolute(0.0, base_dy))
+        }
+    } else {
+        host.child(draw(&fade.base).absolute(0.0, 0.0))
+    }
 }
 
 fn action(key: &str, name: &str, on_press: fn(&mut State)) -> El {
@@ -241,8 +230,8 @@ fn confirm(s: &State) -> El {
     )
 }
 
-fn label(value: impl Into<String>, size: f32, weight: f32, color: u32) -> El {
-    text(value).font(TextStyle::new(size, weight)).color(c(color))
+fn label(value: impl AsRef<str>, size: f32, weight: f32, color: u32) -> El {
+    text(value.as_ref()).font(TextStyle::new(size, weight)).color(c(color))
 }
 
 fn c(hex: u32) -> Color {
