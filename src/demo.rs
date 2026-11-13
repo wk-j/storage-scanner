@@ -92,20 +92,16 @@ fn reveal(t: f64, start: f64, end: f64) -> f64 {
 }
 
 /// Category bytes at `scan_t`, with optional clear / empty animations and a settled end state.
-pub fn bytes(scan_t: f64, clear_age: Option<f64>, trash_age: Option<f64>, settled: bool) -> [f64; N] {
+pub fn bytes(scan_t: f64, _clear_age: Option<f64>, trash_age: Option<f64>, settled: bool) -> [f64; N] {
     let mut out = [0.0; N];
     for i in 0..N {
         let (a, b) = WINDOWS[i];
         out[i] = TOTALS[i] * reveal(scan_t, a, b);
     }
-    if let Some(age) = clear_age {
-        out[Cat::Caches.ix()] = TOTALS[Cat::Caches.ix()] * (1.0 - ease(age / CLEAR_DUR));
-    }
     if let Some(age) = trash_age {
         out[Cat::Trash.ix()] = TOTALS[Cat::Trash.ix()] * (1.0 - ease(age / CLEAR_DUR));
     }
     if settled {
-        out[Cat::Caches.ix()] = 0.0;
         out[Cat::Trash.ix()] = 0.0;
     }
     out
@@ -222,11 +218,11 @@ mod tests {
         assert!(mid[Cat::Trash.ix()] < TOTALS[Cat::Trash.ix()] * 0.85);
         assert!(mid[Cat::Apps.ix()] > TOTALS[Cat::Apps.ix()] * 0.99);
         let clearing = bytes(SCAN_END, Some(CLEAR_DUR * 0.5), None, false);
-        assert!(clearing[Cat::Caches.ix()] < TOTALS[Cat::Caches.ix()] * 0.6);
+        assert_eq!(clearing[Cat::Caches.ix()], TOTALS[Cat::Caches.ix()]);
         let settled = bytes(SCAN_END, None, None, true);
-        assert_eq!(settled[Cat::Caches.ix()], 0.0);
+        assert_eq!(settled[Cat::Caches.ix()], TOTALS[Cat::Caches.ix()]);
         assert_eq!(settled[Cat::Trash.ix()], 0.0);
-        assert_eq!(fmt_gb(sum(&settled)), "279.6");
+        assert_eq!(fmt_gb(sum(&settled)), "326.4");
     }
 
     #[test]

@@ -1,7 +1,7 @@
-//! Categories, the home-directory walk, disk capacity, and the only two deletes this app performs.
+//! Categories, the home-directory walk, disk capacity, and the Trash-only deletion policy.
 //!
-//! Clearing is limited to the real directories `~/Library/Caches` and `~/.Trash`. A symlink at
-//! either root is refused. Children that are symlinks are unlinked without following them, and a
+//! Clearing is limited to the real directory `~/.Trash`. A symlink at
+//! that root is refused. Children that are symlinks are unlinked without following them, and a
 //! directory whose canonical path escapes the root is left in place.
 
 use std::collections::HashMap;
@@ -542,9 +542,12 @@ fn root_for(home: &Path, which: Purge) -> PathBuf {
     }
 }
 
-/// Delete the children of `~/Library/Caches` or `~/.Trash` and nothing else.
+/// Delete the children of `~/.Trash` only and nothing else.
 /// Returns the number of bytes removed.
 pub fn purge(home: &Path, which: Purge) -> Result<u64, String> {
+    if which != Purge::Trash {
+        return Err("Cache deletion is disabled. Only Trash can be emptied.".into());
+    }
     let root = root_for(home, which);
     if !root.exists() {
         return Ok(0);
@@ -672,7 +675,7 @@ mod tests {
     }
 
     #[test]
-    fn purge_only_removes_children_of_caches_and_trash() {
+    fn purge_only_removes_trash_and_refuses_caches() {
         let root = std::env::temp_dir().join(format!("storage-scanner-purge-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let home = root.join("home");
@@ -686,16 +689,13 @@ mod tests {
             std::os::unix::fs::symlink(home.join("Documents/keep.txt"), home.join("Library/Caches/link")).unwrap();
         }
 
-        let freed = purge(&home, Purge::Caches).unwrap();
-        assert!(freed >= "cache-a".len() as u64 + "cache-b".len() as u64);
-        assert!(!home.join("Library/Caches/a.txt").exists());
-        assert!(!home.join("Library/Caches/sub").exists());
-        assert!(home.join("Library/Caches").is_dir(), "the Caches directory itself stays");
-        assert_eq!(fs::read(home.join("Library/Important/keep.txt")).unwrap(), b"keep-me");
+        let err = purge(&home, Purge::Caches).unwrap_err();
+        assert!(err.contains("disabled"));
+        assert_eq!(fs::read(home.join("Library/Caches/a.txt")).unwrap(), b"cache-a");
+        assert_eq!(fs::read(home.join("Library/Caches/sub/b.txt")).unwrap(), b"cache-b");
         assert_eq!(fs::read(home.join("Documents/keep.txt")).unwrap(), b"doc");
-        assert!(home.join(".Trash/old.txt").exists());
         #[cfg(unix)]
-        assert!(!home.join("Library/Caches/link").exists(), "the symlink is removed, not its target");
+        assert!(fs::symlink_metadata(home.join("Library/Caches/link")).unwrap().file_type().is_symlink());
 
         let freed_trash = purge(&home, Purge::Trash).unwrap();
         assert!(freed_trash >= "trash".len() as u64);
@@ -703,15 +703,15 @@ mod tests {
         assert!(home.join(".Trash").is_dir());
         assert_eq!(fs::read(home.join("Documents/keep.txt")).unwrap(), b"doc");
 
-        // A symlinked Caches root is refused, and the target is untouched.
+        // A symlinked Trash root is refused, and the target is untouched.
         let elsewhere = root.join("elsewhere");
         write_file(&elsewhere.join("secret.txt"), b"secret");
         let linked_home = root.join("linked");
         fs::create_dir_all(linked_home.join("Library")).unwrap();
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(&elsewhere, linked_home.join("Library/Caches")).unwrap();
-            let err = purge(&linked_home, Purge::Caches).unwrap_err();
+            std::os::unix::fs::symlink(&elsewhere, linked_home.join(".Trash")).unwrap();
+            let err = purge(&linked_home, Purge::Trash).unwrap_err();
             assert!(err.contains("refusing"), "{err}");
             assert_eq!(fs::read(elsewhere.join("secret.txt")).unwrap(), b"secret");
         }

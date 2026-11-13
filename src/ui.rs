@@ -183,8 +183,8 @@ fn footer_line(snap: &FooterSnap) -> El {
         .child(icon)
         .child(label(&snap.message, 19.0, 400.0, if snap.kind == Footer::Scanning || snap.kind == Footer::Done { 0x9a9ca6 } else { 0xb7b9c0 }).shrink());
     if let Some(name) = snap.button {
-        let press = if name == "Empty Trash" { model::press_trash } else { model::press_clear };
-        let key = if name == "Empty Trash" { "empty-trash" } else { "clear-caches" };
+        let press = model::press_trash;
+        let key = "empty-trash";
         line = line.child(spacer()).child(action(key, name, press));
     }
     line
@@ -228,9 +228,9 @@ fn confirm(s: &State) -> El {
             "Empty Trash",
         ),
         _ => (
-            "Clear caches?",
-            "This permanently deletes everything inside ~/Library/Caches. Apps rebuild caches when they need them.",
-            "Clear caches",
+            "Cache deletion disabled",
+            "Only Trash can be emptied. Caches are kept.",
+            "Close",
         ),
     };
     let dialog_w = 540.0;

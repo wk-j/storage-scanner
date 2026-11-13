@@ -1,6 +1,6 @@
 //! App state. Demo numbers are a function of the clock; a real scan arrives from a background walk.
 //! Clearing in demo mode only changes those numbers. The delete path is never called unless the
-//! user confirms, and then only for `~/Library/Caches` or `~/.Trash`.
+//! user confirms, and then only for `~/.Trash` only.
 
 use std::sync::Arc;
 
@@ -280,7 +280,7 @@ impl State {
 
     pub fn scene_clearing(&mut self) {
         self.pin_scan = Some(99.0);
-        self.clear_origin = Some(0.0);
+        self.trash_origin = Some(0.0);
     }
 
     pub fn scene_emptied(&mut self) {
@@ -420,11 +420,7 @@ pub fn press_rescan(s: &mut State) {
 }
 
 pub fn press_clear(s: &mut State) {
-    if s.scanning || s.clear_origin.is_some() || s.confirm.is_some() || s.footer != Footer::Caches {
-        return;
-    }
-    // Demo confirms too, then only plays the animation. Real mode deletes after the same dialog.
-    s.confirm = Some(Purge::Caches);
+    s.notice = Some("Cache deletion is disabled. Only Trash can be emptied.".into());
 }
 
 pub fn press_trash(s: &mut State) {
@@ -441,6 +437,10 @@ pub fn press_cancel(s: &mut State) {
 /// Confirmed delete. Demo mode never reaches this; it animates without touching disk.
 pub fn press_confirm(s: &mut State) {
     let Some(which) = s.confirm.take() else { return };
+    if which != Purge::Trash {
+        s.notice = Some("Cache deletion is disabled. Only Trash can be emptied.".into());
+        return;
+    }
     if s.demo {
         begin_anim(s, which);
         return;
@@ -461,8 +461,7 @@ pub fn press_confirm(s: &mut State) {
 fn begin_anim(s: &mut State, which: Purge) {
     match which {
         Purge::Caches => {
-            s.held_caches = s.live[Cat::Caches.ix()].max(s.held_caches);
-            s.clear_origin = Some(s.t);
+            return;
         }
         Purge::Trash => {
             s.held_trash = s.live[Cat::Trash.ix()].max(s.held_trash);
@@ -668,21 +667,15 @@ fn smooth(cur: f64, target: f64, dt: f64) -> f64 {
     cur + (target - cur) * k
 }
 
-fn footer(scanning: bool, live: &[f64; N], clear_age: Option<f64>, trash_age: Option<f64>, settled: bool) -> Footer {
+fn footer(scanning: bool, live: &[f64; N], _clear_age: Option<f64>, trash_age: Option<f64>, settled: bool) -> Footer {
     if scanning {
         return Footer::Scanning;
     }
     if settled {
         return Footer::Done;
     }
-    if clear_age.is_some_and(|age| age < demo::CLEAR_DUR) {
-        return Footer::Caches;
-    }
     if trash_age.is_some_and(|age| age < demo::CLEAR_DUR) {
         return Footer::Trash;
-    }
-    if live[Cat::Caches.ix()] > 0.2 * demo::GB && clear_age.is_none() {
-        return Footer::Caches;
     }
     if live[Cat::Trash.ix()] > 0.2 * demo::GB {
         return Footer::Trash;
@@ -735,14 +728,14 @@ fn footer_snap(s: &State) -> FooterSnap {
         Footer::Caches => FooterSnap {
             kind: Footer::Caches,
             message: format!("Caches are using {} GB. Apps rebuild them when they need them.", demo::fmt_gb(s.held_caches)),
-            button: Some("Clear caches"),
+            button: None,
         },
         Footer::Trash => FooterSnap {
             kind: Footer::Trash,
             message: format!("The Trash is holding {} GB of things you've already deleted.", demo::fmt_gb(s.held_trash)),
             button: Some("Empty Trash"),
         },
-        Footer::Done => FooterSnap { kind: Footer::Done, message: "Caches and the Trash are clear.".into(), button: None },
+        Footer::Done => FooterSnap { kind: Footer::Done, message: "No Trash to empty. Caches are kept.".into(), button: None },
     }
 }
 
@@ -977,21 +970,37 @@ mod tests {
     }
 
     #[test]
+    fn cache_clear_is_blocked_even_with_stale_confirmation() {
+        for demo in [false, true] {
+            let mut s = idle_state();
+            s.demo = demo;
+            s.footer = Footer::Caches;
+            press_clear(&mut s);
+            assert!(s.confirm.is_none());
+            s.confirm = Some(Purge::Caches);
+            press_confirm(&mut s);
+            assert!(s.clear_origin.is_none());
+            assert!(s.notice.as_ref().unwrap().contains("disabled"));
+            assert_eq!(s.live[Cat::Caches.ix()], demo::TOTALS[Cat::Caches.ix()]);
+        }
+    }
+
+    #[test]
     fn fire_requires_confirmation_and_stops_after_clear() {
         let mut s = idle_state();
-        s.footer = Footer::Caches;
+        s.footer = Footer::Trash;
         s.scanning = false;
         s.t = 10.0;
-        press_clear(&mut s);
+        press_trash(&mut s);
         assert!(s.confirm.is_some());
         assert!(burn_area(&s).is_none());
         press_cancel(&mut s);
         assert!(burn_area(&s).is_none());
-        press_clear(&mut s);
+        press_trash(&mut s);
         press_confirm(&mut s);
         s.t += 0.2;
         let (edge, intensity) = burn_area(&s).expect("confirmed demo clear burns");
-        let expected = bar::edges(&s.live, s.capacity)[Cat::Caches.ix()];
+        let expected = bar::edges(&s.live, s.capacity)[Cat::Trash.ix()];
         assert_eq!(edge.x, expected.x);
         assert_eq!(edge.w, expected.w);
         assert!(intensity > 0.0);
