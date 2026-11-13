@@ -6,15 +6,8 @@ use rune::{Cursor, Cx, El, Shape, TextStyle, col, el, row, spacer, text};
 use crate::bar;
 use crate::demo;
 use crate::icons;
-use crate::model::{self, Crossfade, Footer, FooterSnap, State, StatusId, StatusSnap, CARD_H, CARD_W};
+use crate::model::{self, Crossfade, Footer, FooterSnap, State, StatusId, StatusSnap, BAR_Y, CARD_H, CARD_W, DIVIDER_Y, HEADER_Y, LEGEND_Y, PAD_X, STATUS_Y};
 use crate::scan::Cat;
-
-const PAD_X: f32 = 30.0;
-const HEADER_Y: f32 = 26.0;
-const STATUS_Y: f32 = 78.0;
-const BAR_Y: f32 = 118.0;
-const LEGEND_Y: f32 = 272.0;
-const DIVIDER_Y: f32 = 468.0;
 
 pub fn view(s: &State, _: &mut Cx<State>) -> El {
     // The window is the card. A titled window cannot show transparent rounded corners, so the
@@ -36,7 +29,7 @@ fn card(s: &State) -> El {
         .child(legend(s))
         .child(el().absolute(0.0, DIVIDER_Y).size(CARD_W, 1.0).fill(ca(0xffffff, 0.08)))
         .child(footer(s));
-    card = segment_hits(card, s);
+    card = hover_targets(card, s);
     if s.confirm.is_some() {
         card = card.child(confirm(s));
     }
@@ -72,18 +65,22 @@ fn pixels(s: &State) -> El {
         .size(bar::BAR_W + bar::BLEED_X * 2.0, bar::BAR_H + bar::BLEED_TOP)
 }
 
-fn segment_hits(mut card: El, s: &State) -> El {
-    let edges = bar::edges(&s.live, s.capacity);
-    for cat in Cat::ALL {
-        let edge = edges[cat.ix()];
-        if edge.w < 6.0 {
-            continue;
+/// Legend cells and bar segments tile their regions, so a move across a visual gap stays on a category.
+fn hover_targets(mut card: El, s: &State) -> El {
+    for row in 0..3 {
+        for col in 0..3 {
+            let (x, y, w, h) = model::legend_hit_rect(row, col);
+            let cat = model::LEGEND[row][col];
+            card = card.child(
+                el().absolute(x, y).size(w, h).hit().cursor(Cursor::Pointer)
+                    .on_hover_change(move |st: &mut State, inside, _| model::note_hit(st, cat, inside)),
+            );
         }
+    }
+    for (cat, x0, x1) in model::bar_hit_spans(&s.live, s.capacity) {
         card = card.child(
-            el().absolute(PAD_X + edge.x, BAR_Y)
-                .size(edge.w, bar::BAR_H)
-                .fill(ca(0xffffff, 0.001))
-                .on_hover_change(move |st: &mut State, inside, _| model::set_hover(st, cat, inside)),
+            el().absolute(x0, BAR_Y).size((x1 - x0).max(1.0), bar::BAR_H).hit().cursor(Cursor::Pointer)
+                .on_hover_change(move |st: &mut State, inside, _| model::note_hit(st, cat, inside)),
         );
     }
     card
@@ -135,13 +132,8 @@ fn status_line(snap: &StatusSnap) -> El {
 }
 
 fn legend(s: &State) -> El {
-    let rows = [
-        [Cat::Apps, Cat::Developer, Cat::Photos],
-        [Cat::Movies, Cat::Documents, Cat::Music],
-        [Cat::System, Cat::Caches, Cat::Trash],
-    ];
-    let mut list = col().absolute(PAD_X, LEGEND_Y).size(bar::BAR_W, 132.0).gap(6.0);
-    for group in rows {
+    let mut list = col().absolute(PAD_X, LEGEND_Y).size(bar::BAR_W, model::LEGEND_H).gap(6.0);
+    for group in model::LEGEND {
         let mut line = row().w_full().h(40.0).gap(16.0);
         for cat in group {
             line = line.child(cell(s, cat).grow(1.0));
@@ -158,8 +150,6 @@ fn cell(s: &State, cat: Cat) -> El {
     let fade = 1.0 - 0.42 * others;
     row().key(format!("cat-{}", cat.key())).h(40.0).px(10.0).gap(8.0).center_y().radius(10.0)
         .fill(ca(0xffffff, bg))
-        .cursor(Cursor::Pointer)
-        .on_hover_change(move |st: &mut State, inside, _| model::set_hover(st, cat, inside))
         .child(icons::category(cat, 16.0).opacity(fade))
         .child(label(cat.name(), 14.5, 600.0, 0xf3f4f6).opacity(fade))
         .child(spacer())

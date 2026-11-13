@@ -12,8 +12,24 @@ use crate::scan::{self, Cat, N, Purge, Shared, Snap, Stat};
 
 pub const CARD_W: f32 = 960.0;
 pub const CARD_H: f32 = 540.0;
+pub const PAD_X: f32 = 30.0;
+pub const HEADER_Y: f32 = 26.0;
+pub const STATUS_Y: f32 = 78.0;
+pub const BAR_Y: f32 = 118.0;
+pub const LEGEND_Y: f32 = 272.0;
+pub const LEGEND_H: f32 = 132.0;
+pub const DIVIDER_Y: f32 = 468.0;
+/// Legend order, row by row. Hit cells tile this grid with no gaps.
+pub const LEGEND: [[Cat; 3]; 3] = [
+    [Cat::Apps, Cat::Developer, Cat::Photos],
+    [Cat::Movies, Cat::Documents, Cat::Music],
+    [Cat::System, Cat::Caches, Cat::Trash],
+];
 /// Hover fades in and out over this long, ease-out.
 const HOVER_SECS: f32 = 0.18;
+/// Keep the last category this long after the pointer leaves the legend and the bar.
+/// A move into another category inside the window goes straight across, with no default line in between.
+const HOVER_GRACE: f32 = 0.14;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Readout {
@@ -61,6 +77,7 @@ pub struct FooterSnap {
 }
 
 /// Two copies of a line, crossfading. `mix` is the incoming layer's opacity.
+/// Retargeting never adds a third copy: the clearer of the two stays, at the opacity it already has.
 #[derive(Clone, Debug)]
 pub struct Crossfade<T: Clone> {
     pub base: T,
@@ -123,18 +140,21 @@ impl<T: Clone> Crossfade<T> {
     }
 
     fn begin(&mut self, next: T) {
-        let keep = self.incoming.is_some() && self.mix < 0.5;
-        if self.incoming.is_some() && !keep {
-            if let Some(inc) = self.incoming.take() {
-                self.base = inc;
+        if self.incoming.is_some() {
+            // The clearer layer becomes the one that fades out, still at its current opacity.
+            // The new line takes the opacity the fainter layer already had, so nothing snaps.
+            let visible = self.mix.clamp(0.0, 1.0);
+            if visible >= 0.5 {
+                if let Some(inc) = self.incoming.take() {
+                    self.base = inc;
+                }
+                self.mix = 1.0 - visible;
             }
+        } else {
             self.mix = 0.0;
         }
         self.incoming = Some(next);
-        self.from = if keep { self.mix } else { 0.0 };
-        if !keep {
-            self.mix = 0.0;
-        }
+        self.from = self.mix;
         self.goal = 1.0;
         self.elapsed = 0.0;
     }
@@ -168,6 +188,11 @@ pub struct State {
     pub live: [f64; N],
     pub capacity: f64,
     pub hover: Option<Cat>,
+    /// Category whose hit rect contains the pointer. Geometry in `settle_hover` decides what is shown.
+    hit: Option<Cat>,
+    /// The pointer has left every category and `hover` is held until `HOVER_GRACE` elapses.
+    leaving: bool,
+    leave_elapsed: f32,
     /// Window-point pointer, so headless frames can draw a cursor. The live window keeps the system pointer.
     pub pointer: Option<(f32, f32)>,
     /// Smoothed 0..1 hover for each category. The legend and the bar read this, not the raw pointer.
@@ -209,6 +234,9 @@ impl State {
             live: [0.0; N],
             capacity: if demo { demo::CAPACITY } else { 0.0 },
             hover: None,
+            hit: None,
+            leaving: false,
+            leave_elapsed: 0.0,
             pointer: None,
             hover_amt: [0.0; N],
             hover_from: [0.0; N],
@@ -284,12 +312,58 @@ pub fn set_pointer(s: &mut State, x: f32, y: f32) {
     s.pointer = Some((x, y));
 }
 
-pub fn set_hover(s: &mut State, cat: Cat, inside: bool) {
+/// What a legend or bar hit rect reported. The shown category follows the pointer geometry, so a
+/// leave that arrives before the next enter cannot blank the line for a frame.
+pub fn note_hit(s: &mut State, cat: Cat, inside: bool) {
     if inside {
-        s.hover = Some(cat);
-    } else if s.hover == Some(cat) {
-        s.hover = None;
+        s.hit = Some(cat);
+    } else if s.hit == Some(cat) {
+        s.hit = None;
     }
+}
+
+/// Window rect of one legend cell. The nine cells tile the legend with shared edges and no gaps.
+pub fn legend_hit_rect(row: usize, col: usize) -> (f32, f32, f32, f32) {
+    let cw = bar::BAR_W / 3.0;
+    let rh = LEGEND_H / 3.0;
+    (PAD_X + col as f32 * cw, LEGEND_Y + row as f32 * rh, cw, rh)
+}
+
+/// Bar hit spans in window x, each abutting the next. The left inset belongs to the first
+/// category, so a horizontal move never falls in a gap between segments.
+pub fn bar_hit_spans(bytes: &[f64; N], capacity: f64) -> Vec<(Cat, f32, f32)> {
+    let edges = bar::edges(bytes, capacity);
+    let mut spans = Vec::new();
+    let mut start = PAD_X;
+    for cat in Cat::ALL {
+        let edge = edges[cat.ix()];
+        if edge.w < 0.5 {
+            continue;
+        }
+        let end = PAD_X + edge.x + edge.w;
+        if end > start + 0.5 {
+            spans.push((cat, start, end));
+            start = end;
+        }
+    }
+    spans
+}
+
+/// Category under a window point. Legend wins; the bar's free space is not a category.
+pub fn category_at(x: f32, y: f32, bytes: &[f64; N], capacity: f64) -> Option<Cat> {
+    if (LEGEND_Y..LEGEND_Y + LEGEND_H).contains(&y) && (PAD_X..PAD_X + bar::BAR_W).contains(&x) {
+        let col = ((x - PAD_X) / (bar::BAR_W / 3.0)).floor() as usize;
+        let row = ((y - LEGEND_Y) / (LEGEND_H / 3.0)).floor() as usize;
+        return Some(LEGEND[row.min(2)][col.min(2)]);
+    }
+    if (BAR_Y..BAR_Y + bar::BAR_H).contains(&y) {
+        for (cat, x0, x1) in bar_hit_spans(bytes, capacity) {
+            if x >= x0 && x < x1 {
+                return Some(cat);
+            }
+        }
+    }
+    None
 }
 
 /// Own hover amount, and the strongest other category (what dims this row and its bar segment).
@@ -311,6 +385,9 @@ pub fn press_rescan(s: &mut State) {
     s.trash_origin = None;
     s.settled = false;
     s.hover = None;
+    s.hit = None;
+    s.leaving = false;
+    s.leave_elapsed = 0.0;
     s.hover_amt = [0.0; N];
     s.hover_from = [0.0; N];
     s.hover_goal = [0.0; N];
@@ -411,6 +488,8 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     }
 
     s.footer = footer(s.scanning, &s.live, clear_age, trash_age, s.settled);
+    // Decide the category before the detail line, so a gap never paints the default for a frame.
+    let hover_holding = settle_hover(s, dt as f32);
     s.readout = readout(s, scan_t, clear_age, trash_age);
 
     let dissolving = if clear_age.is_some_and(|age| age < demo::CLEAR_DUR) {
@@ -433,7 +512,78 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
 
     let clearing = clear_age.is_some_and(|age| age < demo::CLEAR_DUR + 0.15);
     let emptying = trash_age.is_some_and(|age| age < demo::CLEAR_DUR + 0.15);
-    s.scanning || clearing || emptying || !s.particles.is_empty() || drift || hover_moving || status_moving || footer_moving || (!s.demo && !s.real_done)
+    if std::env::var_os("HOVER_TRACE").is_some() {
+        trace_hover(s);
+    }
+    s.scanning || clearing || emptying || !s.particles.is_empty() || drift || hover_holding || hover_moving || status_moving || footer_moving || (!s.demo && !s.real_done)
+}
+
+/// Hold the current category across a short gap. Entering another category inside the grace
+/// replaces it directly. The default line waits until the pointer has been outside the legend
+/// and the bar for the whole grace.
+fn settle_hover(s: &mut State, dt: f32) -> bool {
+    if s.confirm.is_some() {
+        return false;
+    }
+    let under = match s.pointer {
+        Some((x, y)) => category_at(x, y, &s.live, s.capacity),
+        None => return false,
+    };
+    if let Some(cat) = under {
+        let changed = s.hover != Some(cat);
+        s.hover = Some(cat);
+        s.leaving = false;
+        s.leave_elapsed = 0.0;
+        return changed;
+    }
+    if s.hover.is_none() {
+        s.leaving = false;
+        s.leave_elapsed = 0.0;
+        return false;
+    }
+    if !s.leaving {
+        s.leaving = true;
+        s.leave_elapsed = 0.0;
+    }
+    s.leave_elapsed += dt.max(0.0);
+    if s.leave_elapsed >= HOVER_GRACE {
+        s.hover = None;
+        s.leaving = false;
+        s.leave_elapsed = 0.0;
+        return true;
+    }
+    true
+}
+
+fn trace_hover(s: &State) {
+    let geom = s.pointer.and_then(|(x, y)| category_at(x, y, &s.live, s.capacity));
+    let base_op = if s.status_fade.incoming.is_some() { 1.0 - s.status_fade.mix } else { 1.0 };
+    let (inc, inc_op) = match &s.status_fade.incoming {
+        Some(v) => (status_label(&v.id), format!("{:.4}", s.status_fade.mix)),
+        None => ("-".to_string(), "-".to_string()),
+    };
+    eprintln!(
+        "HOVER t={:.4} geom={} hit={} shown={} base={} bop={:.4} inc={} iop={}",
+        s.t,
+        geom.map(Cat::key).unwrap_or("-"),
+        s.hit.map(Cat::key).unwrap_or("-"),
+        s.hover.map(Cat::key).unwrap_or("-"),
+        status_label(&s.status_fade.base.id),
+        base_op,
+        inc,
+        inc_op,
+    );
+}
+
+fn status_label(id: &StatusId) -> String {
+    match id {
+        StatusId::Quiet => "quiet".into(),
+        StatusId::Hover(cat) => format!("hover:{}", cat.key()),
+        StatusId::Calculating => "calculating".into(),
+        StatusId::Clearing => "clearing".into(),
+        StatusId::Emptying => "emptying".into(),
+        StatusId::Notice => "notice".into(),
+    }
 }
 
 /// Ease each category toward 1 while the pointer is inside it and toward 0 after it leaves.
@@ -681,5 +831,162 @@ mod tests {
         assert!(!fade.step(path_a, |s| s.id.clone(), 0.0), "a new path in the same line does not restart the fade");
         assert!(fade.incoming.is_none());
         assert_eq!(fade.base.detail, "~/b");
+    }
+
+    #[test]
+    fn retargeting_mid_fade_keeps_the_opacity_already_on_screen() {
+        let mut fade = Crossfade::new(StatusSnap::quiet());
+        assert!(!fade.step(StatusSnap::quiet(), |s| s.id.clone(), 0.0));
+        let apps = hover_snap(Cat::Apps);
+        let photos = hover_snap(Cat::Photos);
+        let dev = hover_snap(Cat::Developer);
+
+        assert!(fade.step(apps.clone(), |s| s.id.clone(), 0.09));
+        let dominant = fade.mix;
+        assert!(dominant > 0.5, "apps is the clearer layer, mix {dominant}");
+        assert!(fade.step(photos.clone(), |s| s.id.clone(), 0.0));
+        assert!((1.0 - fade.mix - dominant).abs() < 1e-4, "apps stays at {dominant}, mix {}", fade.mix);
+        assert_eq!(fade.base.id, StatusId::Hover(Cat::Apps));
+        assert_eq!(fade.incoming.as_ref().map(|s| s.id.clone()), Some(StatusId::Hover(Cat::Photos)));
+
+        let mut fade = Crossfade::new(StatusSnap::quiet());
+        assert!(!fade.step(StatusSnap::quiet(), |s| s.id.clone(), 0.0));
+        assert!(fade.step(apps.clone(), |s| s.id.clone(), 0.02));
+        let faint = fade.mix;
+        assert!(faint < 0.5, "apps is still the fainter layer, mix {faint}");
+        let base_op = 1.0 - faint;
+        assert!(fade.step(dev, |s| s.id.clone(), 0.0));
+        assert!((fade.mix - faint).abs() < 1e-4, "the new line takes the faint opacity");
+        assert!((1.0 - fade.mix - base_op).abs() < 1e-4);
+        assert_eq!(fade.base.id, StatusId::Quiet);
+        assert!(fade.incoming.is_some());
+    }
+
+    #[test]
+    fn legend_and_bar_hits_cover_the_gaps() {
+        let (x, _, w, _) = legend_hit_rect(0, 0);
+        let (x1, _, _, _) = legend_hit_rect(0, 1);
+        assert!((x + w - x1).abs() < 1e-4, "legend columns meet");
+        let (_, y0, _, h0) = legend_hit_rect(0, 0);
+        let (_, y1, _, _) = legend_hit_rect(1, 0);
+        assert!((y0 + h0 - y1).abs() < 1e-4, "legend rows meet");
+
+        // The old layout left a 16px column gap and a 6px row gap. Both are inside a cell now.
+        let gap_x = PAD_X + (bar::BAR_W - 32.0) / 3.0 + 8.0;
+        let gap_y = LEGEND_Y + 40.0 + 3.0;
+        assert_eq!(category_at(gap_x, LEGEND_Y + 20.0, &demo::TOTALS, demo::CAPACITY), Some(Cat::Apps));
+        assert_eq!(category_at(175.0, gap_y, &demo::TOTALS, demo::CAPACITY), Some(Cat::Apps));
+        assert_eq!(category_at(175.0, 260.0, &demo::TOTALS, demo::CAPACITY), None);
+
+        let spans = bar_hit_spans(&demo::TOTALS, demo::CAPACITY);
+        assert!(spans.len() >= 2);
+        assert!((spans[0].1 - PAD_X).abs() < 1e-3, "the left inset belongs to the first segment");
+        for pair in spans.windows(2) {
+            assert!((pair[0].2 - pair[1].1).abs() < 1e-3, "bar segments meet");
+            let boundary = pair[0].2;
+            let y = BAR_Y + bar::BAR_H * 0.5;
+            assert_eq!(category_at(boundary - 0.5, y, &demo::TOTALS, demo::CAPACITY), Some(pair[0].0));
+            assert_eq!(category_at(boundary + 0.5, y, &demo::TOTALS, demo::CAPACITY), Some(pair[1].0));
+        }
+        assert_eq!(category_at(PAD_X + 2.0, BAR_Y + 40.0, &demo::TOTALS, demo::CAPACITY), Some(Cat::Apps));
+        assert_eq!(category_at(PAD_X + bar::BAR_W - 4.0, BAR_Y + 40.0, &demo::TOTALS, demo::CAPACITY), None);
+    }
+
+    #[test]
+    fn sweeping_across_gaps_does_not_dip_the_detail_line() {
+        let mut s = idle_state();
+        // Prime on the quiet line, then rest on Apps.
+        let (x, y, w, h) = legend_hit_rect(0, 0);
+        s.pointer = Some((x + w * 0.5, y + h * 0.5));
+        for _ in 0..20 {
+            drive(&mut s, 1.0 / 60.0);
+        }
+        assert!(s.status_fade.incoming.is_none());
+        assert_eq!(s.status_fade.base.id, StatusId::Hover(Cat::Apps));
+
+        let mut presence = Vec::new();
+        let mut saw_quiet = false;
+        // One step per frame, fast enough to cross the old 16px gap in well under the grace.
+        let y = y + h * 0.5;
+        let mut x = PAD_X + 8.0;
+        while x < PAD_X + bar::BAR_W - 8.0 {
+            s.pointer = Some((x, y));
+            drive(&mut s, 1.0 / 60.0);
+            presence.push(hover_presence(&s));
+            saw_quiet |= layer_is_quiet(&s.status_fade.base) || s.status_fade.incoming.as_ref().is_some_and(layer_is_quiet);
+            x += 8.0;
+        }
+        assert!(!saw_quiet, "the default line appears between categories");
+        assert!(presence.iter().all(|p| *p > 0.98), "detail opacity dipped: {presence:?}");
+
+        // Leave the legend for less than the grace, then enter Photos. Still no default line.
+        s.pointer = Some((80.0, 40.0));
+        for _ in 0..6 {
+            drive(&mut s, 1.0 / 60.0);
+        }
+        assert!(s.hover.is_some(), "grace still holds the last category");
+        assert!(!layer_is_quiet(&s.status_fade.base));
+        let (px, py, pw, ph) = legend_hit_rect(0, 2);
+        s.pointer = Some((px + pw * 0.5, py + ph * 0.5));
+        for _ in 0..20 {
+            drive(&mut s, 1.0 / 60.0);
+            assert!(hover_presence(&s) > 0.98, "presence {}", hover_presence(&s));
+            assert!(!layer_is_quiet(&s.status_fade.base));
+            assert!(s.status_fade.incoming.as_ref().map(layer_is_quiet) != Some(true));
+        }
+        assert_eq!(s.hover, Some(Cat::Photos));
+
+        // Staying outside past the grace is what reveals the default line.
+        s.pointer = Some((80.0, 40.0));
+        for _ in 0..12 {
+            drive(&mut s, 1.0 / 60.0);
+        }
+        assert_eq!(s.hover, None);
+        assert!(matches!(s.status_fade.base.id, StatusId::Hover(_)) || matches!(s.status_fade.incoming.as_ref().map(|i| i.id.clone()), Some(StatusId::Quiet)) || s.status_fade.base.id == StatusId::Quiet);
+        let mut quiet = false;
+        for _ in 0..12 {
+            drive(&mut s, 1.0 / 60.0);
+            quiet |= s.status_fade.base.id == StatusId::Quiet && s.status_fade.incoming.is_none();
+        }
+        assert!(quiet, "the default line settles only after the pointer has left");
+    }
+
+    fn hover_snap(cat: Cat) -> StatusSnap {
+        StatusSnap { id: StatusId::Hover(cat), cat: Some(cat), title: cat.name().into(), detail: "1 GB".into(), blurb: "n".into() }
+    }
+
+    fn idle_state() -> State {
+        let mut s = State::new();
+        s.scanning = false;
+        s.demo = true;
+        s.live = demo::TOTALS;
+        s.capacity = demo::CAPACITY;
+        s.readout = Readout::Quiet;
+        assert!(!s.status_fade.step(status_snap(&s), |snap| snap.id.clone(), 0.0));
+        s
+    }
+
+    fn drive(s: &mut State, dt: f32) {
+        s.t += dt as f64;
+        let _ = settle_hover(s, dt);
+        s.readout = if s.hover.is_some() { Readout::Hover } else { Readout::Quiet };
+        let _ = step_hover(s, dt);
+        let _ = s.status_fade.step(status_snap(s), |snap| snap.id.clone(), dt);
+    }
+
+    fn layer_is_quiet(snap: &StatusSnap) -> bool {
+        snap.id == StatusId::Quiet
+    }
+
+    fn hover_presence(s: &State) -> f32 {
+        let mut p = 0.0;
+        let base_op = if s.status_fade.incoming.is_some() { 1.0 - s.status_fade.mix } else { 1.0 };
+        if matches!(s.status_fade.base.id, StatusId::Hover(_)) {
+            p += base_op;
+        }
+        if s.status_fade.incoming.as_ref().is_some_and(|i| matches!(i.id, StatusId::Hover(_))) {
+            p += s.status_fade.mix;
+        }
+        p
     }
 }
