@@ -1,5 +1,6 @@
 //! The dot-matrix disk bar: a rounded field of square cells, one glowing run per category,
-//! dim dots for free space, and particles that lift off a segment as it is cleared.
+//! dim dots for free space. Clear embers are emitted by the fire compositor, not a second
+//! CPU particle system with a different origin and trajectory.
 
 use rune::Pixels;
 
@@ -20,17 +21,6 @@ const RADIUS: f32 = 14.0;
 pub struct Edge {
     pub x: f32,
     pub w: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Particle {
-    pub x: f32,
-    pub y: f32,
-    pub vx: f32,
-    pub vy: f32,
-    pub life: f32,
-    pub color: [u8; 3],
-    pub size: f32,
 }
 
 struct Tone {
@@ -82,69 +72,12 @@ pub fn edges(bytes: &[f64; N], capacity: f64) -> [Edge; N] {
     out
 }
 
-pub fn advance(parts: &mut Vec<Particle>, prev: &mut Option<[Edge; N]>, now: &[Edge; N], dissolving: Option<usize>, dt: f32) {
-    if let (Some(cat), Some(old)) = (dissolving, *prev) {
-        let right_old = old[cat].x + old[cat].w;
-        let right_new = now[cat].x + now[cat].w;
-        if right_old > right_new + 0.35 {
-            spawn(parts, right_new, right_old, TONE[cat].spark);
-        }
-    }
-    *prev = Some(*now);
-    let dt = dt.clamp(0.0, 0.05);
-    if dt > 0.0 {
-        for p in parts.iter_mut() {
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            p.vx *= (1.0 - 0.55 * dt).max(0.0);
-            p.vy *= (1.0 - 0.28 * dt).max(0.0);
-            p.life -= dt * 0.78;
-        }
-    }
-    parts.retain(|p| p.life > 0.03 && p.y > -BLEED_TOP - 4.0 && p.x < BAR_W + BLEED_X);
-    if parts.len() > 420 {
-        let drop = parts.len() - 420;
-        parts.drain(0..drop);
-    }
-}
-
-fn spawn(parts: &mut Vec<Particle>, x0: f32, x1: f32, color: [u8; 3]) {
-    let g = grid();
-    let mut x = x0;
-    let mut col = (x0 * 4.0) as u32;
-    let mut added = 0u32;
-    let step = if x1 - x0 > 36.0 { 2 } else { 1 };
-    while x < x1 - 0.15 && added < 140 {
-        for r in (0..g.rows).step_by(step) {
-            let h = hash(col, r as u32);
-            let y = g.oy + r as f32 * PITCH + CELL * 0.5;
-            let speed = 0.55 + (h % 80) as f32 / 100.0;
-            parts.push(Particle {
-                x: x + CELL * 0.5 + (h % 5) as f32 * 0.15,
-                y: y + (h % 3) as f32 * 0.2,
-                vx: (8.0 + (h % 46) as f32) * speed,
-                vy: -(28.0 + (h % 78) as f32) * speed,
-                life: 0.75 + (h % 30) as f32 / 100.0,
-                color: if h % 4 == 0 { mix(color, [255, 255, 255], 0.45) } else { color },
-                size: 1.5 + (h % 3) as f32 * 0.55,
-            });
-            added += 1;
-            if added >= 140 {
-                break;
-            }
-        }
-        x += PITCH * step as f32;
-        col += 1;
-    }
-}
-
 pub struct Input<'a> {
     pub bytes: &'a [f64; N],
     pub capacity: f64,
     /// Per-category hover, 0 at rest and 1 fully under the pointer. Neighbours dim by the strongest other value.
     pub hover: &'a [f32; N],
     pub scanning: bool,
-    pub particles: &'a [Particle],
 }
 
 pub fn render(pixels: &Pixels, sig: &mut u64, input: &Input<'_>) {
@@ -168,12 +101,6 @@ fn signature(input: &Input<'_>) -> u64 {
         mix(&mut h, (*v * 1000.0).round() as u64);
     }
     mix(&mut h, input.scanning as u64);
-    mix(&mut h, input.particles.len() as u64);
-    for p in input.particles.iter().step_by(2) {
-        mix(&mut h, (p.x * 4.0) as i32 as u32 as u64);
-        mix(&mut h, (p.y * 4.0) as i32 as u32 as u64);
-        mix(&mut h, (p.life * 16.0) as u64);
-    }
     h
 }
 
@@ -214,7 +141,6 @@ fn raster(input: &Input<'_>) -> (u32, u32, Vec<u8>) {
         let alpha = lerp(0.22, 0.78, mine);
         paint_segment_outline(&mut buf, w, h, edge, col, alpha);
     }
-    paint_particles(&mut buf, w, h, input.particles);
     (w, h, buf)
 }
 
@@ -400,18 +326,6 @@ fn paint_cells(buf: &mut [u8], w: u32, h: u32, g: &Grid, edges: &[Edge; N], inpu
     }
 }
 
-fn paint_particles(buf: &mut [u8], w: u32, h: u32, parts: &[Particle]) {
-    for p in parts {
-        let (bx, by) = buf_xy(p.x, p.y);
-        let s = (p.size * SS as f32).round().max(1.0) as i32;
-        let a = (p.life.clamp(0.0, 1.0).powf(1.15) * 255.0) as u8;
-        fill_rect(buf, w, h, bx.round() as i32 - s / 2, by.round() as i32 - s / 2, s, s, [p.color[0], p.color[1], p.color[2], a]);
-        if p.life > 0.35 {
-            add_glow(buf, w, bx.round() as i32, by.round() as i32, p.color, p.life * 0.45);
-        }
-    }
-}
-
 fn others(hover: &[f32; N], index: usize) -> f32 {
     let mut max = 0.0f32;
     for (i, v) in hover.iter().enumerate() {
@@ -536,7 +450,7 @@ mod tests {
         let bytes = demo::bytes(demo::SCAN_END, None, None, false);
         let mut hover = [0.0; N];
         hover[Cat::Apps.ix()] = 1.0;
-        let (w, h, buf) = raster(&Input { bytes: &bytes, capacity: CAPACITY, hover: &hover, scanning: false, particles: &[] });
+        let (w, h, buf) = raster(&Input { bytes: &bytes, capacity: CAPACITY, hover: &hover, scanning: false });
         assert!(w > 100 && h > 100);
         let sample = |lx: f32, ly: f32| {
             let (x, y) = buf_xy(lx, ly);

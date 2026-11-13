@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rune::{Pixels, Tx, Waker};
 
-use crate::bar::{self, Particle};
+use crate::bar;
 use crate::demo::{self, Activity};
 use crate::scan::{self, Cat, N, Purge, Shared, Snap, Stat};
 
@@ -219,8 +219,6 @@ pub struct State {
     real_done: bool,
     real_path: String,
     sig: u64,
-    particles: Vec<Particle>,
-    prev_edges: Option<[bar::Edge; N]>,
     shared: Arc<Shared>,
     waker: Option<Waker>,
 }
@@ -261,8 +259,6 @@ impl State {
             real_done: false,
             real_path: String::new(),
             sig: 0,
-            particles: Vec::new(),
-            prev_edges: None,
             shared: Arc::new(Shared::new()),
             waker: None,
         }
@@ -411,8 +407,6 @@ pub fn press_rescan(s: &mut State) {
     s.hover_elapsed = [0.0; N];
     s.confirm = None;
     s.notice = None;
-    s.particles.clear();
-    s.prev_edges = None;
     s.sig = 0;
     s.real_done = false;
     if s.demo {
@@ -514,22 +508,16 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     let hover_holding = settle_hover(s, visual_dt);
     s.readout = readout(s, scan_t, clear_age, trash_age);
 
-    let dissolving = if clear_age.is_some_and(|age| age < demo::CLEAR_DUR) {
-        Some(Cat::Caches.ix())
-    } else if trash_age.is_some_and(|age| age < demo::CLEAR_DUR) {
-        Some(Cat::Trash.ix())
-    } else {
-        None
-    };
-    let edges = bar::edges(&s.live, s.capacity);
-    bar::advance(&mut s.particles, &mut s.prev_edges, &edges, dissolving, visual_dt);
+    // Commit the frame that removes outgoing crossfade layers too. Otherwise an
+    // invisible old action can remain over the new footer once all motion stops.
+    let finishing_transition = s.status_fade.incoming.is_some() || s.footer_fade.incoming.is_some();
     let hover_moving = step_hover(s, visual_dt);
     let status_moving = s.status_fade.step(status_snap(s), |snap| snap.id.clone(), visual_dt);
     let footer_moving = s.footer_fade.step(footer_snap(s), |snap| snap.clone(), visual_dt);
     bar::render(
         &s.pixels,
         &mut s.sig,
-        &bar::Input { bytes: &s.live, capacity: s.capacity, hover: &s.hover_amt, scanning: s.scanning, particles: &s.particles },
+        &bar::Input { bytes: &s.live, capacity: s.capacity, hover: &s.hover_amt, scanning: s.scanning },
     );
 
     let clearing = clear_age.is_some_and(|age| age < demo::CLEAR_DUR + 0.15);
@@ -537,7 +525,7 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     if std::env::var_os("HOVER_TRACE").is_some() {
         trace_hover(s);
     }
-    s.scanning || clearing || emptying || !s.particles.is_empty() || drift || hover_holding || hover_moving || status_moving || footer_moving || (!s.demo && !s.real_done)
+    s.scanning || clearing || emptying || drift || hover_holding || hover_moving || status_moving || footer_moving || finishing_transition || (!s.demo && !s.real_done)
 }
 
 /// Hold the current category across a short gap. Entering another category inside the grace
@@ -1037,7 +1025,11 @@ mod tests {
         poll(&mut s, 20.0 + 1.0 / 60.0, &mut tx);
         assert!(s.hover_amt[Cat::Photos.ix()] > first);
         for frame in 2..=30 {
-            poll(&mut s, 20.0 + frame as f64 / 60.0, &mut tx);
+            let had_outgoing = s.status_fade.incoming.is_some();
+            let redraw = poll(&mut s, 20.0 + frame as f64 / 60.0, &mut tx);
+            if had_outgoing && s.status_fade.incoming.is_none() {
+                assert!(redraw, "commit the final frame that removes the outgoing layer");
+            }
         }
         assert_eq!(s.hover_amt[Cat::Photos.ix()], 1.0);
         assert_eq!(s.hover_amt[Cat::Apps.ix()], 0.0);

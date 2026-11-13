@@ -27,7 +27,10 @@ impl Compositor<State> for Gfx {
             at.push(n as u32);
             layers.push(Fx::fire(FireParams {
                 style: FireStyle::Top, height, intensity, smoke,
-                embers: 24, scale: 26.0, ..FireParams::default()
+                // A single emitter owns both flames and embers. The old CPU dust
+                // originated at the shrinking right edge and flew in another direction.
+                embers: 36, ember_size: 1.2, ember_rise: 110.0,
+                scale: 26.0, ..FireParams::default()
             }).on(Shape::rounded(x, y, w, h, 2.0)).at(f.rt.t as f32));
             placements.push(FxSlot::default().scale(k).clip(i.clip, i.fade));
         }
