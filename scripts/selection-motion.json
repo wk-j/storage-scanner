@@ -1,0 +1,55 @@
+{
+  "events": [
+    {
+      "t": 0.2,
+      "type": "move",
+      "key": "cat-apps"
+    },
+    {
+      "t": 2.2,
+      "type": "move",
+      "key": "cat-photos"
+    },
+    {
+      "t": 4.2,
+      "type": "move",
+      "key": "cat-movies"
+    },
+    {
+      "t": 6.2,
+      "type": "move",
+      "key": "cat-caches"
+    },
+    {
+      "t": 8.2,
+      "type": "move",
+      "key": "cat-documents"
+    },
+    {
+      "t": 8.28,
+      "type": "move",
+      "key": "cat-developer"
+    },
+    {
+      "t": 8.36,
+      "type": "move",
+      "key": "cat-music"
+    },
+    {
+      "t": 10,
+      "type": "move",
+      "x": 820,
+      "y": 64
+    },
+    {
+      "t": 11,
+      "type": "move",
+      "key": "cat-apps"
+    },
+    {
+      "t": 13,
+      "type": "mark",
+      "name": "end"
+    }
+  ]
+}

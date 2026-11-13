@@ -24,6 +24,7 @@ fn card(s: &State) -> El {
         .h_full()
         .fill(c(0x17181b))
         .child(pixels(s))
+        .child(burning(s))
         .child(header(s))
         .child(status(s))
         .child(legend(s))
@@ -57,6 +58,15 @@ fn cursor_at(x: f32, y: f32) -> El {
     el().absolute(x, y).size(16.0, 22.0).shape(
         Shape::new().fill(arrow(0.8), c(0x111214)).fill(arrow(0.0), c(0xf4f5f7)),
     )
+}
+
+fn burning(s: &State) -> El {
+    let Some((edge, amount)) = model::burn_area(s) else { return el(); };
+    // Fire rises from the bottom of the segment being cleared, never the whole bar.
+    rune::effect(crate::fire::FIRE).key("clear-fire")
+        .effect_data([bar::BAR_H, 1.8 * amount, 0.6 * amount, 0.0])
+        .absolute(PAD_X + edge.x, BAR_Y + bar::BAR_H - 3.0)
+        .size(edge.w, 3.0).effect_bleed(bar::BAR_H + 24.0)
 }
 
 fn pixels(s: &State) -> El {

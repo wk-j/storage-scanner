@@ -378,6 +378,23 @@ pub fn hover_pair(s: &State, cat: Cat) -> (f32, f32) {
     (mine, others)
 }
 
+/// Original clear area and flame envelope. No effect until confirmation starts a clear.
+pub fn burn_area(s: &State) -> Option<(bar::Edge, f32)> {
+    let (cat, start) = if let Some(start) = s.trash_origin.filter(|t| s.t - t < demo::CLEAR_DUR) {
+        (Cat::Trash, start)
+    } else if let Some(start) = s.clear_origin.filter(|t| s.t - t < demo::CLEAR_DUR) {
+        (Cat::Caches, start)
+    } else { return None; };
+    let age = (s.t - start).max(0.0);
+    let envelope = (age / 0.15).min(1.0) * ((demo::CLEAR_DUR - age) / 0.3).clamp(0.0, 1.0);
+    // Keep the emitter stable while cells dissolve: resizing its simulation each frame
+    // continually resets the flame and leaves only skinny sparks instead of a burn.
+    let mut before_clear = s.live;
+    before_clear[cat.ix()] = if cat == Cat::Caches { s.held_caches } else { s.held_trash };
+    let edge = bar::edges(&before_clear, s.capacity)[cat.ix()];
+    (edge.w > 1.0 && envelope > 0.0).then_some((edge, envelope as f32))
+}
+
 pub fn press_rescan(s: &mut State) {
     s.scan_epoch = s.t;
     s.pin_scan = None;
@@ -463,6 +480,11 @@ fn begin_anim(s: &mut State, which: Purge) {
 pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     let dt = (t - s.t).max(0.0);
     s.t = t;
+    // A settled native window stops polling. The first pointer event can arrive seconds
+    // later: that idle wall-clock gap is not elapsed time for a newly started transition.
+    // Keep scan/clear clocks absolute, but advance visual interpolation by at most one
+    // modest frame so hover and text fades cannot finish on their very first redraw.
+    let visual_dt = dt.min(1.0 / 30.0) as f32;
     // The bar and the figures are sampled from the clock. Layout springs would trail them.
     tx.instant();
 
@@ -489,7 +511,7 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
 
     s.footer = footer(s.scanning, &s.live, clear_age, trash_age, s.settled);
     // Decide the category before the detail line, so a gap never paints the default for a frame.
-    let hover_holding = settle_hover(s, dt as f32);
+    let hover_holding = settle_hover(s, visual_dt);
     s.readout = readout(s, scan_t, clear_age, trash_age);
 
     let dissolving = if clear_age.is_some_and(|age| age < demo::CLEAR_DUR) {
@@ -500,10 +522,10 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
         None
     };
     let edges = bar::edges(&s.live, s.capacity);
-    bar::advance(&mut s.particles, &mut s.prev_edges, &edges, dissolving, dt as f32);
-    let hover_moving = step_hover(s, dt as f32);
-    let status_moving = s.status_fade.step(status_snap(s), |snap| snap.id.clone(), dt as f32);
-    let footer_moving = s.footer_fade.step(footer_snap(s), |snap| snap.clone(), dt as f32);
+    bar::advance(&mut s.particles, &mut s.prev_edges, &edges, dissolving, visual_dt);
+    let hover_moving = step_hover(s, visual_dt);
+    let status_moving = s.status_fade.step(status_snap(s), |snap| snap.id.clone(), visual_dt);
+    let footer_moving = s.footer_fade.step(footer_snap(s), |snap| snap.clone(), visual_dt);
     bar::render(
         &s.pixels,
         &mut s.sig,
@@ -964,6 +986,62 @@ mod tests {
         s.readout = Readout::Quiet;
         assert!(!s.status_fade.step(status_snap(&s), |snap| snap.id.clone(), 0.0));
         s
+    }
+
+    #[test]
+    fn fire_requires_confirmation_and_stops_after_clear() {
+        let mut s = idle_state();
+        s.footer = Footer::Caches;
+        s.scanning = false;
+        s.t = 10.0;
+        press_clear(&mut s);
+        assert!(s.confirm.is_some());
+        assert!(burn_area(&s).is_none());
+        press_cancel(&mut s);
+        assert!(burn_area(&s).is_none());
+        press_clear(&mut s);
+        press_confirm(&mut s);
+        s.t += 0.2;
+        let (edge, intensity) = burn_area(&s).expect("confirmed demo clear burns");
+        let expected = bar::edges(&s.live, s.capacity)[Cat::Caches.ix()];
+        assert_eq!(edge.x, expected.x);
+        assert_eq!(edge.w, expected.w);
+        assert!(intensity > 0.0);
+        s.t += demo::CLEAR_DUR;
+        assert!(burn_area(&s).is_none());
+        press_rescan(&mut s);
+        assert!(burn_area(&s).is_none());
+    }
+
+    #[test]
+    fn selecting_after_native_idle_does_not_skip_the_animation() {
+        let mut s = idle_state();
+        s.pin_scan = Some(99.0);
+        let mut tx = Tx::default();
+        let (x, y, w, h) = legend_hit_rect(0, 0);
+        s.pointer = Some((x + w * 0.5, y + h * 0.5));
+        for frame in 1..=30 {
+            poll(&mut s, frame as f64 / 60.0, &mut tx);
+        }
+        assert_eq!(s.hover_amt[Cat::Apps.ix()], 1.0);
+
+        // Native rendering sleeps at rest; headless video still polls every frame.
+        let (x, y, w, h) = legend_hit_rect(0, 2);
+        s.pointer = Some((x + w * 0.5, y + h * 0.5));
+        assert!(poll(&mut s, 20.0, &mut tx));
+        let first = s.hover_amt[Cat::Photos.ix()];
+        assert!(first > 0.0 && first < 0.5, "new selection must start fading, not snap: {first}");
+        assert!(s.hover_amt[Cat::Apps.ix()] > 0.5);
+        assert!(s.status_fade.incoming.is_some());
+        assert!(s.status_fade.mix < 0.5);
+        poll(&mut s, 20.0 + 1.0 / 60.0, &mut tx);
+        assert!(s.hover_amt[Cat::Photos.ix()] > first);
+        for frame in 2..=30 {
+            poll(&mut s, 20.0 + frame as f64 / 60.0, &mut tx);
+        }
+        assert_eq!(s.hover_amt[Cat::Photos.ix()], 1.0);
+        assert_eq!(s.hover_amt[Cat::Apps.ix()], 0.0);
+        assert!(s.status_fade.incoming.is_none());
     }
 
     fn drive(s: &mut State, dt: f32) {

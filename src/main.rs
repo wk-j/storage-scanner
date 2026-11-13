@@ -10,6 +10,7 @@
 
 mod bar;
 mod demo;
+mod fire;
 mod icons;
 mod model;
 mod scan;
@@ -19,7 +20,7 @@ use model::{State, CARD_H, CARD_W};
 use rune::AppSpec;
 
 fn main() {
-    rune::run(AppSpec {
+    rune::App::new(AppSpec {
         scenes: &[
             ("scanning", State::scene_scanning),
             ("idle", State::scene_idle),
@@ -38,5 +39,5 @@ fn main() {
         setup: Some(model::setup),
         poll: Some(model::poll),
         ..AppSpec::new("Storage Scanner", (CARD_W, CARD_H), State::new, ui::view)
-    });
+    }).compositor(fire::Gfx::default()).run();
 }
