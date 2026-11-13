@@ -6,6 +6,14 @@ A native disk map, written in Rust with [Rune](https://github.com/anomalyco/rune
 
 Design reference: [Storage scanner by @kshvbgde](https://x.com/bestsaasdesigns/status/2121105777415090259). The frames it was matched against are in `docs/design/`.
 
+## Clear with fire
+
+[![Fire effect while clearing caches and emptying Trash](docs/fire-clear.gif)](docs/fire-clear.mp4)
+
+The fire effect from UI Lab burns the area being cleared after confirmation. Cancel leaves it untouched. This clip uses demo mode, so no real files are deleted.
+
+[Watch the 60 fps MP4](docs/fire-clear.mp4).
+
 ## Build and run
 
 Rust 1.85 or newer (edition 2024). The window uses Metal on macOS and Vulkan or DX12 elsewhere. A machine with no GPU can render through Lavapipe:
