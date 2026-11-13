@@ -141,15 +141,18 @@ fn legend(s: &State) -> El {
 }
 
 fn cell(s: &State, cat: Cat) -> El {
-    let on = s.hover == Some(cat);
+    let (mine, others) = model::hover_pair(s, cat);
+    // Other rows fade while this one's highlight eases in. A hair of fill keeps the row hittable at rest.
+    let bg = 0.001 + 0.074 * mine;
+    let fade = 1.0 - 0.42 * others;
     row().key(format!("cat-{}", cat.key())).h(40.0).px(10.0).gap(8.0).center_y().radius(10.0)
-        .fill(if on { ca(0xffffff, 0.075) } else { ca(0xffffff, 0.001) })
+        .fill(ca(0xffffff, bg))
         .cursor(Cursor::Pointer)
         .on_hover_change(move |st: &mut State, inside, _| model::set_hover(st, cat, inside))
-        .child(icons::category(cat, 16.0))
-        .child(label(cat.name(), 14.5, 600.0, 0xf3f4f6))
+        .child(icons::category(cat, 16.0).opacity(fade))
+        .child(label(cat.name(), 14.5, 600.0, 0xf3f4f6).opacity(fade))
         .child(spacer())
-        .child(label(format!("{} GB", demo::fmt_gb(s.live[cat.ix()])), 13.5, 500.0, 0x8d8f98))
+        .child(label(format!("{} GB", demo::fmt_gb(s.live[cat.ix()])), 13.5, 500.0, 0x8d8f98).opacity(fade))
 }
 
 fn footer(s: &State) -> El {

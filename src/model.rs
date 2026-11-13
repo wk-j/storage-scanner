@@ -12,6 +12,8 @@ use crate::scan::{self, Cat, N, Purge, Shared, Snap, Stat};
 
 pub const CARD_W: f32 = 960.0;
 pub const CARD_H: f32 = 540.0;
+/// Hover fades in and out over this long, ease-out.
+const HOVER_SECS: f32 = 0.18;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Readout {
@@ -37,6 +39,11 @@ pub struct State {
     pub live: [f64; N],
     pub capacity: f64,
     pub hover: Option<Cat>,
+    /// Smoothed 0..1 hover for each category. The legend and the bar read this, not the raw pointer.
+    pub hover_amt: [f32; N],
+    hover_from: [f32; N],
+    hover_goal: [f32; N],
+    hover_elapsed: [f32; N],
     pub readout: Readout,
     pub footer: Footer,
     pub confirm: Option<Purge>,
@@ -69,6 +76,10 @@ impl State {
             live: [0.0; N],
             capacity: if demo { demo::CAPACITY } else { 0.0 },
             hover: None,
+            hover_amt: [0.0; N],
+            hover_from: [0.0; N],
+            hover_goal: [0.0; N],
+            hover_elapsed: [0.0; N],
             readout: Readout::Quiet,
             footer: Footer::Scanning,
             confirm: None,
@@ -99,7 +110,12 @@ impl State {
 
     pub fn scene_idle(&mut self) {
         self.pin_scan = Some(99.0);
+        // The still is the rested hover, not the first frames of the fade.
         self.hover = Some(Cat::Apps);
+        self.hover_amt[Cat::Apps.ix()] = 1.0;
+        self.hover_from[Cat::Apps.ix()] = 1.0;
+        self.hover_goal[Cat::Apps.ix()] = 1.0;
+        self.hover_elapsed[Cat::Apps.ix()] = HOVER_SECS;
     }
 
     pub fn scene_clearing(&mut self) {
@@ -136,6 +152,18 @@ pub fn set_hover(s: &mut State, cat: Cat, inside: bool) {
     }
 }
 
+/// Own hover amount, and the strongest other category (what dims this row and its bar segment).
+pub fn hover_pair(s: &State, cat: Cat) -> (f32, f32) {
+    let mine = s.hover_amt[cat.ix()];
+    let mut others = 0.0f32;
+    for (i, v) in s.hover_amt.iter().enumerate() {
+        if i != cat.ix() {
+            others = others.max(*v);
+        }
+    }
+    (mine, others)
+}
+
 pub fn press_rescan(s: &mut State) {
     s.scan_epoch = s.t;
     s.pin_scan = None;
@@ -143,6 +171,10 @@ pub fn press_rescan(s: &mut State) {
     s.trash_origin = None;
     s.settled = false;
     s.hover = None;
+    s.hover_amt = [0.0; N];
+    s.hover_from = [0.0; N];
+    s.hover_goal = [0.0; N];
+    s.hover_elapsed = [0.0; N];
     s.confirm = None;
     s.notice = None;
     s.particles.clear();
@@ -257,16 +289,50 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     };
     let edges = bar::edges(&s.live, s.capacity);
     bar::advance(&mut s.particles, &mut s.prev_edges, &edges, dissolving, dt as f32);
-    let hover = s.hover.map(|c| c.ix());
+    let hover_moving = step_hover(s, dt as f32);
     bar::render(
         &s.pixels,
         &mut s.sig,
-        &bar::Input { bytes: &s.live, capacity: s.capacity, hover, scanning: s.scanning, particles: &s.particles },
+        &bar::Input { bytes: &s.live, capacity: s.capacity, hover: &s.hover_amt, scanning: s.scanning, particles: &s.particles },
     );
 
     let clearing = clear_age.is_some_and(|age| age < demo::CLEAR_DUR + 0.15);
     let emptying = trash_age.is_some_and(|age| age < demo::CLEAR_DUR + 0.15);
-    s.scanning || clearing || emptying || !s.particles.is_empty() || drift || (!s.demo && !s.real_done)
+    s.scanning || clearing || emptying || !s.particles.is_empty() || drift || hover_moving || (!s.demo && !s.real_done)
+}
+
+/// Ease each category toward 1 while the pointer is inside it and toward 0 after it leaves.
+/// Retargeting mid-fade starts from the value already on screen. Returns whether any fade is still moving.
+fn step_hover(s: &mut State, dt: f32) -> bool {
+    let mut moving = false;
+    for i in 0..N {
+        let goal = if s.hover == Some(Cat::ALL[i]) { 1.0 } else { 0.0 };
+        if (goal - s.hover_goal[i]).abs() > 0.001 {
+            s.hover_from[i] = s.hover_amt[i];
+            s.hover_elapsed[i] = 0.0;
+            s.hover_goal[i] = goal;
+        }
+        if (s.hover_amt[i] - s.hover_goal[i]).abs() <= 0.001 {
+            s.hover_amt[i] = s.hover_goal[i];
+            continue;
+        }
+        s.hover_elapsed[i] += dt;
+        let u = ease_out((s.hover_elapsed[i] / HOVER_SECS).clamp(0.0, 1.0));
+        s.hover_amt[i] = s.hover_from[i] + (s.hover_goal[i] - s.hover_from[i]) * u;
+        if s.hover_elapsed[i] >= HOVER_SECS {
+            s.hover_amt[i] = s.hover_goal[i];
+        }
+        if (s.hover_amt[i] - s.hover_goal[i]).abs() > 0.001 {
+            moving = true;
+        }
+    }
+    moving
+}
+
+/// Ease-out quadratic: fast at the start, settled at the end.
+fn ease_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - t) * (1.0 - t)
 }
 
 fn apply_real(s: &mut State, snap: &Snap, clear_age: Option<f64>, trash_age: Option<f64>, dt: f64, drift: &mut bool) {
@@ -353,4 +419,41 @@ fn readout(s: &State, scan_t: f64, clear_age: Option<f64>, trash_age: Option<f64
         return Readout::Emptying("~/.Trash".into());
     }
     if s.hover.is_some() { Readout::Hover } else { Readout::Quiet }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hover_eases_out_over_about_180ms_and_settles() {
+        let mut s = State::new();
+        s.hover = Some(Cat::Apps);
+        assert!(step_hover(&mut s, 0.0), "a new hover keeps frames coming");
+        assert!(s.hover_amt[Cat::Apps.ix()] < 0.01);
+
+        assert!(step_hover(&mut s, 0.09));
+        let mid = s.hover_amt[Cat::Apps.ix()];
+        // Ease-out is ahead of a straight line (0.5) and not finished yet.
+        assert!(mid > 0.65 && mid < 0.9, "mid fade {mid}");
+
+        let mut moving = true;
+        for _ in 0..4 {
+            moving = step_hover(&mut s, 0.05);
+        }
+        assert!(!moving);
+        assert!((s.hover_amt[Cat::Apps.ix()] - 1.0).abs() < 1e-3);
+        assert!(s.hover_amt[Cat::Photos.ix()] < 1e-3);
+
+        s.hover = None;
+        assert!(step_hover(&mut s, 0.0));
+        assert!((s.hover_amt[Cat::Apps.ix()] - 1.0).abs() < 1e-3, "leave starts from the current value");
+        assert!(!step_hover(&mut s, HOVER_SECS));
+        assert!(s.hover_amt[Cat::Apps.ix()] < 1e-3);
+
+        s.hover = Some(Cat::Photos);
+        let _ = step_hover(&mut s, 0.04);
+        let photos = s.hover_amt[Cat::Photos.ix()];
+        assert!(photos > 0.2 && photos < 1.0, "enter fades in, {photos}");
+    }
 }

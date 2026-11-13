@@ -141,7 +141,8 @@ fn spawn(parts: &mut Vec<Particle>, x0: f32, x1: f32, color: [u8; 3]) {
 pub struct Input<'a> {
     pub bytes: &'a [f64; N],
     pub capacity: f64,
-    pub hover: Option<usize>,
+    /// Per-category hover, 0 at rest and 1 fully under the pointer. Neighbours dim by the strongest other value.
+    pub hover: &'a [f32; N],
     pub scanning: bool,
     pub particles: &'a [Particle],
 }
@@ -163,7 +164,9 @@ fn signature(input: &Input<'_>) -> u64 {
         mix(&mut h, (*b / 1.0e7) as u64);
     }
     mix(&mut h, (input.capacity / 1.0e9) as u64);
-    mix(&mut h, input.hover.unwrap_or(64) as u64);
+    for v in input.hover {
+        mix(&mut h, (*v * 1000.0).round() as u64);
+    }
     mix(&mut h, input.scanning as u64);
     mix(&mut h, input.particles.len() as u64);
     for p in input.particles.iter().step_by(2) {
@@ -186,8 +189,8 @@ fn raster(input: &Input<'_>) -> (u32, u32, Vec<u8>) {
         if edge.w < 0.8 {
             continue;
         }
-        let dim = input.hover.is_some_and(|h| h != i);
-        paint_glow(&mut buf, w, h, *edge, TONE[i].glow, if dim { 0.42 } else { 1.0 });
+        let dim = others(input.hover, i);
+        paint_glow(&mut buf, w, h, *edge, TONE[i].glow, lerp(1.0, 0.42, dim));
     }
     if input.scanning {
         let frontier = edges.iter().fold(INSET, |acc, e| if e.w > 0.4 { e.x + e.w } else { acc });
@@ -302,9 +305,7 @@ fn paint_cells(buf: &mut [u8], w: u32, h: u32, g: &Grid, edges: &[Edge; N], inpu
                 } else {
                     tone.base
                 };
-                if input.hover.is_some_and(|hv| hv != i) {
-                    bright = 0.58;
-                }
+                bright = lerp(1.0, 0.58, others(input.hover, i));
                 if input.scanning {
                     let dist = frontier - cx;
                     if (0.0..18.0).contains(&dist) {
@@ -332,6 +333,20 @@ fn paint_particles(buf: &mut [u8], w: u32, h: u32, parts: &[Particle]) {
             add_glow(buf, w, bx.round() as i32, by.round() as i32, p.color, p.life * 0.45);
         }
     }
+}
+
+fn others(hover: &[f32; N], index: usize) -> f32 {
+    let mut max = 0.0f32;
+    for (i, v) in hover.iter().enumerate() {
+        if i != index {
+            max = max.max(*v);
+        }
+    }
+    max.clamp(0.0, 1.0)
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t.clamp(0.0, 1.0)
 }
 
 fn cat_at(edges: &[Edge; N], x: f32) -> Option<usize> {
@@ -438,7 +453,9 @@ mod tests {
     #[test]
     fn cells_colour_the_used_prefix_and_leave_free_space_dim() {
         let bytes = demo::bytes(demo::SCAN_END, None, None, false);
-        let (w, h, buf) = raster(&Input { bytes: &bytes, capacity: CAPACITY, hover: Some(Cat::Apps.ix()), scanning: false, particles: &[] });
+        let mut hover = [0.0; N];
+        hover[Cat::Apps.ix()] = 1.0;
+        let (w, h, buf) = raster(&Input { bytes: &bytes, capacity: CAPACITY, hover: &hover, scanning: false, particles: &[] });
         assert!(w > 100 && h > 100);
         let sample = |lx: f32, ly: f32| {
             let (x, y) = buf_xy(lx, ly);
