@@ -13,9 +13,10 @@ cargo run --release --quiet -- --demo --scale 1 --fps 60 \
   --script scripts/demo.json --video docs/demo.mp4
 
 # Palette GIF, small enough for GitHub to render inline. The mp4 stays the sharper copy.
-PALETTE="$(mktemp --suffix=.png)"
+PALETTE_DIR="$(mktemp -d)"
+PALETTE="$PALETTE_DIR/palette.png"
+trap 'rm -f "$PALETTE"; rmdir "$PALETTE_DIR"' EXIT
 ffmpeg -y -i docs/demo.mp4 -vf "fps=12,scale=640:-1:flags=lanczos,palettegen=stats_mode=diff:max_colors=128" "$PALETTE"
 ffmpeg -y -i docs/demo.mp4 -i "$PALETTE" -lavfi "fps=12,scale=640:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" -loop 0 docs/demo.gif
-rm -f "$PALETTE"
 
 echo "mp4 $(du -h docs/demo.mp4 | awk '{print $1}')  gif $(du -h docs/demo.gif | awk '{print $1}')"

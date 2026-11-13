@@ -11,12 +11,12 @@ use crate::demo::{self, Activity};
 use crate::scan::{self, Cat, N, Purge, Shared, Snap, Stat};
 
 pub const CARD_W: f32 = 960.0;
-pub const CARD_H: f32 = 540.0;
-pub const PAD_X: f32 = 30.0;
-pub const HEADER_Y: f32 = 26.0;
-pub const STATUS_Y: f32 = 78.0;
-pub const BAR_Y: f32 = 118.0;
-pub const LEGEND_Y: f32 = 272.0;
+pub const CARD_H: f32 = 564.0;
+pub const PAD_X: f32 = 36.0;
+pub const HEADER_Y: f32 = 32.0;
+pub const STATUS_Y: f32 = 88.0;
+pub const BAR_Y: f32 = 148.0;
+pub const LEGEND_Y: f32 = 310.0;
 pub const LEGEND_H: f32 = 132.0;
 pub const DIVIDER_Y: f32 = 468.0;
 /// Legend order, row by row. Hit cells tile this grid with no gaps.
@@ -876,7 +876,7 @@ mod tests {
         let gap_y = LEGEND_Y + 40.0 + 3.0;
         assert_eq!(category_at(gap_x, LEGEND_Y + 20.0, &demo::TOTALS, demo::CAPACITY), Some(Cat::Apps));
         assert_eq!(category_at(175.0, gap_y, &demo::TOTALS, demo::CAPACITY), Some(Cat::Apps));
-        assert_eq!(category_at(175.0, 260.0, &demo::TOTALS, demo::CAPACITY), None);
+        assert_eq!(category_at(175.0, BAR_Y + bar::BAR_H + 10.0, &demo::TOTALS, demo::CAPACITY), None);
 
         let spans = bar_hit_spans(&demo::TOTALS, demo::CAPACITY);
         assert!(spans.len() >= 2);

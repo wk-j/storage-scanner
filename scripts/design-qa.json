@@ -1,0 +1,59 @@
+{
+  "events": [
+    {
+      "t": 0.2,
+      "type": "move",
+      "key": "cat-photos"
+    },
+    {
+      "t": 0.6,
+      "type": "tap",
+      "key": "clear-caches"
+    },
+    {
+      "t": 1.0,
+      "type": "tap",
+      "key": "confirm-no"
+    },
+    {
+      "t": 1.3,
+      "type": "tap",
+      "key": "clear-caches"
+    },
+    {
+      "t": 1.8,
+      "type": "tap",
+      "key": "confirm-yes"
+    },
+    {
+      "t": 4.2,
+      "type": "tap",
+      "key": "empty-trash"
+    },
+    {
+      "t": 4.6,
+      "type": "tap",
+      "key": "confirm-no"
+    },
+    {
+      "t": 5.0,
+      "type": "tap",
+      "key": "empty-trash"
+    },
+    {
+      "t": 5.4,
+      "type": "tap",
+      "key": "confirm-yes"
+    },
+    {
+      "t": 8.0,
+      "type": "tap",
+      "key": "rescan"
+    },
+    {
+      "t": 8.3,
+      "type": "tap",
+      "key": "rescan"
+    }
+  ]
+}

@@ -5,16 +5,16 @@ use rune::Pixels;
 
 use crate::scan::N;
 
-pub const BAR_W: f32 = 900.0;
+pub const BAR_W: f32 = 888.0;
 pub const BAR_H: f32 = 132.0;
 pub const BLEED_X: f32 = 36.0;
 pub const BLEED_TOP: f32 = 86.0;
 
 const SS: u32 = 2;
-const PITCH: f32 = 5.7;
-const CELL: f32 = 3.15;
-const INSET: f32 = 11.0;
-const RADIUS: f32 = 18.0;
+const PITCH: f32 = 6.0;
+const CELL: f32 = 4.0;
+const INSET: f32 = 2.0;
+const RADIUS: f32 = 14.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Edge {
@@ -354,7 +354,7 @@ fn paint_cells(buf: &mut [u8], w: u32, h: u32, g: &Grid, edges: &[Edge; N], inpu
                 continue;
             }
             let cat = cat_at(edges, cx);
-            let mut rgb = [68, 70, 76];
+            let mut rgb = [29, 30, 33];
             let mut bright = 1.0f32;
             if let Some(i) = cat {
                 let hsh = hash(c as u32, r as u32);
@@ -372,7 +372,10 @@ fn paint_cells(buf: &mut [u8], w: u32, h: u32, g: &Grid, edges: &[Edge; N], inpu
                 // the others drop toward the bar colour, which is what the reference does on hover.
                 let mine = input.hover[i];
                 let dim = others(input.hover, i);
-                bright = lerp(lerp(0.82, 0.50, dim), 1.0, mine);
+                // Reference has bright boundary rows and sparse middle cells, not a solid matrix.
+                let edge_row = r < 2 || r + 2 >= g.rows;
+                let density = if edge_row { 0.92 } else if hsh % 100 < 26 { 0.85 } else { 0.08 };
+                bright = density * lerp(lerp(0.92, 0.30, dim), 1.0, mine);
                 // A little grey in the dimmed segments, so they read as the reference's dusty dots.
                 rgb = mix(rgb, [86, 90, 98], 0.16 * dim * (1.0 - mine));
                 if mine > 0.0 {
@@ -390,7 +393,9 @@ fn paint_cells(buf: &mut [u8], w: u32, h: u32, g: &Grid, edges: &[Edge; N], inpu
                 rgb = mix([24, 25, 28], rgb, bright);
             }
             let (bx, by) = buf_xy(x, y);
-            fill_rect(buf, w, h, bx.round() as i32, by.round() as i32, cw, cw, [rgb[0], rgb[1], rgb[2], 255]);
+            let size = if cat.is_some() { cw } else { (1.5 * SS as f32) as i32 };
+            let offset = (cw - size) / 2;
+            fill_rect(buf, w, h, bx.round() as i32 + offset, by.round() as i32 + offset, size, size, [rgb[0], rgb[1], rgb[2], 255]);
         }
     }
 }

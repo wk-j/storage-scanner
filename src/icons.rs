@@ -46,20 +46,23 @@ pub fn sparkle(size: f32, color: u32) -> El {
 
 fn apps() -> Shape {
     let col = ink(Cat::Apps);
-    let paper = c(0xf4f7ff);
+    let dark = c(0x14283e);
     Shape::new()
-        .fill(roundish(1.6, 1.6, 12.8, 12.8, 2.6), col)
-        .fill(roundish(3.3, 3.5, 6.2, 5.4, 1.1), paper)
-        .fill(vec![[3.6, 4.0], [8.8, 4.0], [8.8, 5.3], [3.6, 5.3]], col)
+        .fill(roundish(1.0, 2.0, 13.5, 10.5, 2.0), col)
+        .stroke(vec![[1.5, 6.0], [14.0, 6.0]], 1.0, dark)
+        .fill(ngon(3.5, 4.0, 0.65, 8), dark)
+        .fill(ngon(6.0, 4.0, 0.65, 8), dark)
+        .fill(vec![[8.0, 8.0], [15.0, 11.3], [11.5, 12.1], [10.0, 15.5]], dark)
+        .fill(vec![[9.0, 9.3], [14.0, 11.5], [11.0, 12.0], [10.3, 14.1]], col)
 }
 
 fn developer() -> Shape {
     let col = ink(Cat::Developer);
     let dark = c(0x12351f);
     Shape::new()
-        .fill(roundish(1.2, 2.4, 13.6, 11.2, 2.2), col)
-        .stroke(vec![[3.6, 6.2], [6.4, 8.2], [3.6, 10.2]], 1.35, dark)
-        .stroke(vec![[8.0, 10.6], [12.2, 10.6]], 1.35, dark)
+        .fill(roundish(2.0, 1.6, 12.0, 13.0, 3.0), col)
+        .stroke(vec![[5.5, 5.0], [5.5, 2.5], [10.5, 2.5], [10.5, 5.0]], 1.3, dark)
+        .fill(roundish(4.0, 10.0, 4.0, 1.7, 0.6), dark)
 }
 
 fn photos() -> Shape {

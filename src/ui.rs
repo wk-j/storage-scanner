@@ -94,8 +94,8 @@ fn header(s: &State) -> El {
         "of … GB used".into()
     };
     row().absolute(PAD_X, HEADER_Y).size(bar::BAR_W, 44.0).items_end()
-        .child(label(format!("{} GB", demo::fmt_gb(total)), 34.0, 700.0, 0xf5f6f8))
-        .child(label(cap, 15.5, 500.0, 0x8e9099).mb(6.0).ml(12.0))
+        .child(label(format!("{} GB", demo::fmt_gb(total)), 34.0, 500.0, 0xf5f6f8))
+        .child(label(cap, 20.0, 400.0, 0x8e9099).mb(6.0).ml(12.0))
         .child(spacer())
         .child(
             row().key("rescan").role("button").label("Rescan").h(32.0).px(10.0).gap(6.0).center().self_center()
@@ -103,8 +103,8 @@ fn header(s: &State) -> El {
                 .cursor(Cursor::Pointer)
                 .hover(ca(0xffffff, 0.06))
                 .on_press(model::press_rescan)
-                .child(icons::rescan(15.0))
-                .child(label("Rescan", 13.5, 550.0, 0xa5a7b0)),
+                .child(icons::rescan(21.0))
+                .child(label("Rescan", 19.0, 400.0, 0xa5a7b0)),
         )
 }
 
@@ -115,18 +115,18 @@ fn status(s: &State) -> El {
 
 fn status_line(snap: &StatusSnap) -> El {
     match snap.id {
-        StatusId::Quiet => row().size(bar::BAR_W, 24.0).center_y().child(label(&snap.title, 13.5, 450.0, 0x8e9099)),
-        StatusId::Notice => row().size(bar::BAR_W, 24.0).center_y().child(label(&snap.title, 13.5, 500.0, 0xe7b4ae)),
+        StatusId::Quiet => row().size(bar::BAR_W, 24.0).center_y().child(label(&snap.title, 19.0, 400.0, 0x8e9099)),
+        StatusId::Notice => row().size(bar::BAR_W, 24.0).center_y().child(label(&snap.title, 19.0, 400.0, 0xe7b4ae)),
         StatusId::Calculating | StatusId::Clearing | StatusId::Emptying => row().size(bar::BAR_W, 24.0).gap(8.0).center_y()
-            .child(label(&snap.title, 13.5, 560.0, 0xc8cad1))
-            .child(text(snap.detail.clone()).font(TextStyle::new(13.0, 450.0).mono()).color(c(0x8b8d96))),
+            .child(label(&snap.title, 19.0, 400.0, 0xc8cad1))
+            .child(text(snap.detail.clone()).font(TextStyle::new(17.0, 400.0).mono()).color(c(0x8b8d96))),
         StatusId::Hover(_) => {
             let cat = snap.cat.unwrap_or(Cat::Apps);
             row().size(bar::BAR_W, 24.0).gap(8.0).center_y()
-                .child(icons::category(cat, 14.0))
-                .child(label(&snap.title, 13.5, 650.0, 0xf4f5f7))
-                .child(label(&snap.detail, 13.5, 500.0, 0xb4b6be))
-                .child(label(&snap.blurb, 13.5, 450.0, 0x8e9099).shrink())
+                .child(icons::category(cat, 20.0))
+                .child(label(&snap.title, 19.0, 450.0, 0xf4f5f7))
+                .child(label(&snap.detail, 19.0, 400.0, 0xb4b6be))
+                .child(label(&snap.blurb, 19.0, 400.0, 0x8e9099).shrink())
         }
     }
 }
@@ -148,12 +148,12 @@ fn cell(s: &State, cat: Cat) -> El {
     // Other rows fade while this one's highlight eases in. A hair of fill keeps the row hittable at rest.
     let bg = 0.001 + 0.074 * mine;
     let fade = 1.0 - 0.42 * others;
-    row().key(format!("cat-{}", cat.key())).h(40.0).px(10.0).gap(8.0).center_y().radius(10.0)
+    row().key(format!("cat-{}", cat.key())).h(40.0).px(2.0).gap(12.0).center_y().radius(10.0)
         .fill(ca(0xffffff, bg))
-        .child(icons::category(cat, 16.0).opacity(fade))
-        .child(label(cat.name(), 14.5, 600.0, 0xf3f4f6).opacity(fade))
+        .child(icons::category(cat, 22.0).opacity(fade))
+        .child(label(cat.name(), 19.0, 400.0, 0xf3f4f6).opacity(fade))
         .child(spacer())
-        .child(label(format!("{} GB", demo::fmt_gb(s.live[cat.ix()])), 13.5, 500.0, 0x8d8f98).opacity(fade))
+        .child(label(format!("{} GB", demo::fmt_gb(s.live[cat.ix()])), 19.0, 400.0, 0x8d8f98).opacity(fade))
 }
 
 fn footer(s: &State) -> El {
@@ -164,14 +164,14 @@ fn footer(s: &State) -> El {
 
 fn footer_line(snap: &FooterSnap) -> El {
     let icon = match snap.kind {
-        Footer::Scanning => icons::sparkle(15.0, 0x9aa0aa),
-        Footer::Caches => icons::category(Cat::Caches, 16.0),
-        Footer::Trash => icons::category(Cat::Trash, 16.0),
-        Footer::Done => icons::sparkle(15.0, 0x8fd9b0),
+        Footer::Scanning => icons::sparkle(20.0, 0x9aa0aa),
+        Footer::Caches => icons::category(Cat::Caches, 22.0),
+        Footer::Trash => icons::category(Cat::Trash, 22.0),
+        Footer::Done => icons::sparkle(20.0, 0x8fd9b0),
     };
     let mut line = row().size(CARD_W, CARD_H - DIVIDER_Y - 1.0).px(PAD_X).gap(12.0).center_y()
         .child(icon)
-        .child(label(&snap.message, 13.5, 450.0, if snap.kind == Footer::Scanning || snap.kind == Footer::Done { 0x9a9ca6 } else { 0xb7b9c0 }).shrink());
+        .child(label(&snap.message, 19.0, 400.0, if snap.kind == Footer::Scanning || snap.kind == Footer::Done { 0x9a9ca6 } else { 0xb7b9c0 }).shrink());
     if let Some(name) = snap.button {
         let press = if name == "Empty Trash" { model::press_trash } else { model::press_clear };
         let key = if name == "Empty Trash" { "empty-trash" } else { "clear-caches" };
@@ -200,14 +200,14 @@ fn stack<T: Clone>(host: El, fade: &Crossfade<T>, _w: f32, _h: f32, draw: fn(&T)
 }
 
 fn action(key: &str, name: &str, on_press: fn(&mut State)) -> El {
-    row().key(key).role("button").label(name).h(34.0).px(14.0).radius(9.0).center()
+    row().key(key).role("button").label(name).h(48.0).px(17.0).radius(11.0).center()
         .fill(c(0x2c2e33))
         .hover(c(0x3a3c42))
         .border(1.0, ca(0xffffff, 0.10))
         .cursor(Cursor::Pointer)
         .press_scale(0.97)
         .on_press(on_press)
-        .child(label(name, 13.5, 600.0, 0xf4f5f7))
+        .child(label(name, 19.0, 450.0, 0xf4f5f7))
 }
 
 fn confirm(s: &State) -> El {
@@ -223,8 +223,8 @@ fn confirm(s: &State) -> El {
             "Clear caches",
         ),
     };
-    let dialog_w = 440.0;
-    let dialog_h = 196.0;
+    let dialog_w = 540.0;
+    let dialog_h = 230.0;
     el().absolute(0.0, 0.0).size(CARD_W, CARD_H).fill(ca(0x000000, 0.55)).child(
         col().absolute((CARD_W - dialog_w) / 2.0, (CARD_H - dialog_h) / 2.0)
             .size(dialog_w, dialog_h)
@@ -234,7 +234,7 @@ fn confirm(s: &State) -> El {
             .fill(c(0x222328))
             .border(1.0, ca(0xffffff, 0.10))
             .child(label(title, 18.0, 650.0, 0xf4f5f7))
-            .child(label(body, 13.5, 450.0, 0xb7b9c0))
+            .child(label(body, 17.0, 400.0, 0xb7b9c0).w_full().wrap())
             .child(spacer())
             .child(
                 row().w_full().gap(8.0)
