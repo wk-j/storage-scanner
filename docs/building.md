@@ -2,7 +2,7 @@
 
 ## Install with Homebrew
 
-The formula is in [wk-j/homebrew-tap](https://github.com/wk-j/homebrew-tap). It builds the latest release (v0.1.0) from source with Homebrew's Rust:
+The formula is in [wk-j/homebrew-tap](https://github.com/wk-j/homebrew-tap). It builds the latest release (v0.2.0) from source with Homebrew's Rust:
 
 ```sh
 brew install wk-j/tap/storage-scanner           # latest tagged release
