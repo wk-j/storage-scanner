@@ -14,15 +14,15 @@ The fire effect from UI Lab burns the Trash area after confirmation. Cancel leav
 
 ## Install with Homebrew
 
-On macOS this repository is its own Homebrew tap. There is no tagged release yet, so the formula builds the `main` branch from source with Homebrew's Rust:
+On macOS this repository is its own Homebrew tap. The formula builds the latest release (v0.1.0) from source with Homebrew's Rust:
 
 ```sh
 brew tap wk-j/storage-scanner https://github.com/wk-j/storage-scanner
-brew install --HEAD wk-j/storage-scanner/storage-scanner
+brew install wk-j/storage-scanner/storage-scanner
 storage-scanner
 ```
 
-`brew upgrade --fetch-HEAD wk-j/storage-scanner/storage-scanner` rebuilds from the latest `main`. `brew uninstall storage-scanner` and `brew untap wk-j/storage-scanner` remove it. The formula is `Formula/storage-scanner.rb`.
+`brew upgrade storage-scanner` picks up a newer release once the formula points at it. `brew install --HEAD wk-j/storage-scanner/storage-scanner` builds the latest `main` instead. `brew uninstall storage-scanner` and `brew untap wk-j/storage-scanner` remove it. The formula is `Formula/storage-scanner.rb`.
 
 ## Build and run
 
