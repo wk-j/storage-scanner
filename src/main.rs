@@ -2,14 +2,15 @@
 //!
 //! `cargo run --release` opens the window. On Linux that is the deterministic demo (nothing is
 //! deleted). On macOS and Windows it scans the home folder; pass `--demo` for the same fake disk.
-//! `--real` scans for real on Linux too, and still asks before deleting `~/Library/Caches` or
-//! `~/.Trash`.
+//! `--real` scans for real on Linux too, and still asks before emptying `~/.Trash`, the only
+//! thing it deletes. The Developer tools tab only measures and shows commands to run by hand.
 //!
 //! Headless, same renderer:
 //! `cargo run --release -- --demo --snap out/idle-apps.png --scene idle --at 0.4`
 
 mod bar;
 mod demo;
+mod devtools;
 mod fire;
 mod icons;
 mod model;
@@ -26,6 +27,7 @@ fn main() {
             ("idle", State::scene_idle),
             ("clearing", State::scene_clearing),
             ("emptied", State::scene_emptied),
+            ("developer", State::scene_developer),
         ],
         fonts: &[
             include_bytes!("../assets/Inter-Regular.ttf"),

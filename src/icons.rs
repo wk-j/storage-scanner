@@ -44,6 +44,115 @@ pub fn sparkle(size: f32, color: u32) -> El {
     el().size(size, size).shape(shape.view_box(16.0, 16.0))
 }
 
+/// A tool family's glyph in its colour, for the developer tools tab.
+pub fn dev_group(group: crate::devtools::Group, size: f32) -> El {
+    use crate::devtools::Group;
+    let col = c(group.ui());
+    let shape = match group {
+        Group::Docker => docker(col),
+        Group::Node => node(col),
+        Group::Apple => xcode(col),
+        Group::Dotnet => dotnet(col),
+        Group::Python => python(col),
+        Group::Homebrew => homebrew(col),
+        Group::Other => other(col),
+        Group::Rust => rust(col),
+        Group::Java => java(col),
+    };
+    el().size(size, size).shape(shape.view_box(16.0, 16.0))
+}
+
+/// Containers stacked on a hull.
+fn docker(col: Color) -> Shape {
+    let light = c(0xb9d3ff);
+    Shape::new()
+        .fill(roundish(1.0, 8.4, 14.0, 5.6, 2.2), col)
+        .fill(roundish(2.6, 5.4, 2.6, 2.4, 0.5), light)
+        .fill(roundish(5.6, 5.4, 2.6, 2.4, 0.5), light)
+        .fill(roundish(8.6, 5.4, 2.6, 2.4, 0.5), light)
+        .fill(roundish(5.6, 2.4, 2.6, 2.4, 0.5), light)
+}
+
+/// A hexagon with a hollow centre.
+fn node(col: Color) -> Shape {
+    let hex = |r: f32| -> Vec<[f32; 2]> {
+        (0..6).map(|i| {
+            let a = (i as f32 * 60.0 - 90.0).to_radians();
+            [8.0 + r * a.cos(), 8.0 + r * a.sin()]
+        }).collect()
+    };
+    Shape::new().fill(hex(7.0), col).fill(hex(3.0), c(0x12351f))
+}
+
+/// A hammer.
+fn xcode(col: Color) -> Shape {
+    let light = c(0xffc2e4);
+    Shape::new()
+        .stroke(vec![[3.2, 13.4], [9.6, 7.0]], 2.3, col)
+        .fill(vec![[7.6, 3.0], [13.6, 9.0], [11.8, 10.8], [5.8, 4.8]], col)
+        .fill(vec![[7.6, 3.0], [9.4, 1.2], [15.0, 6.8], [13.6, 9.0]], light)
+}
+
+/// A rounded square with an N.
+fn dotnet(col: Color) -> Shape {
+    Shape::new()
+        .fill(roundish(1.4, 1.4, 13.2, 13.2, 3.0), col)
+        .stroke(vec![[5.0, 11.2], [5.0, 4.8], [11.0, 11.2], [11.0, 4.8]], 1.5, c(0x241038))
+}
+
+/// Two interlocked blocks with eyes.
+fn python(col: Color) -> Shape {
+    let light = c(0x9cf3f6);
+    let dark = c(0x08343a);
+    Shape::new()
+        .fill(roundish(1.4, 1.4, 8.6, 8.6, 2.4), col)
+        .fill(roundish(6.0, 6.0, 8.6, 8.6, 2.4), light)
+        .fill(ngon(4.2, 4.2, 0.9, 8), dark)
+        .fill(ngon(11.8, 11.8, 0.9, 8), dark)
+}
+
+/// A mug with foam.
+fn homebrew(col: Color) -> Shape {
+    let foam = c(0xfff1c2);
+    Shape::new()
+        .stroke(vec![[10.8, 7.0], [13.6, 7.0], [13.6, 11.6], [10.8, 11.6]], 1.6, col)
+        .fill(roundish(2.4, 5.0, 8.8, 9.6, 1.6), col)
+        .fill(roundish(1.8, 2.6, 10.0, 3.4, 1.6), foam)
+}
+
+/// A rounded square with three dots.
+fn other(col: Color) -> Shape {
+    let dark = c(0x2a2c31);
+    Shape::new()
+        .fill(roundish(1.4, 1.4, 13.2, 13.2, 3.0), col)
+        .fill(ngon(4.6, 8.0, 1.25, 10), dark)
+        .fill(ngon(8.0, 8.0, 1.25, 10), dark)
+        .fill(ngon(11.4, 8.0, 1.25, 10), dark)
+}
+
+/// A gear.
+fn rust(col: Color) -> Shape {
+    let hole = c(0x17181b);
+    let mut s = Shape::new();
+    for i in 0..10 {
+        let a = i as f32 / 10.0 * std::f32::consts::TAU;
+        let (sa, ca) = a.sin_cos();
+        s = s.stroke(vec![[8.0 + ca * 1.5, 8.0 + sa * 1.5], [8.0 + ca * 7.2, 8.0 + sa * 7.2]], 1.7, col);
+    }
+    s.fill(ngon(8.0, 8.0, 5.0, 20), col).fill(ngon(8.0, 8.0, 2.1, 14), hole)
+}
+
+/// A cup with steam.
+fn java(col: Color) -> Shape {
+    let steam = c(0xffb4b8);
+    Shape::new()
+        .stroke(vec![[5.4, 5.6], [6.4, 4.2], [5.4, 2.6]], 1.1, steam)
+        .stroke(vec![[8.6, 5.6], [9.6, 4.2], [8.6, 2.6]], 1.1, steam)
+        .stroke(vec![[11.0, 8.2], [13.6, 8.2], [13.6, 10.8], [10.6, 10.8]], 1.4, col)
+        .fill(vec![[2.8, 7.0], [11.8, 7.0], [10.8, 13.0], [3.8, 13.0]], col)
+        .stroke(vec![[1.8, 14.6], [12.8, 14.6]], 1.2, col)
+}
+
 fn apps() -> Shape {
     let col = ink(Cat::Apps);
     let dark = c(0x14283e);

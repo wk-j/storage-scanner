@@ -8,6 +8,7 @@ use rune::{Pixels, Tx, Waker};
 
 use crate::bar;
 use crate::demo::{self, Activity};
+use crate::devtools;
 use crate::scan::{self, Cat, N, Purge, Shared, Snap, Stat};
 
 pub const CARD_W: f32 = 960.0;
@@ -26,10 +27,10 @@ pub const LEGEND: [[Cat; 3]; 3] = [
     [Cat::System, Cat::Caches, Cat::Trash],
 ];
 /// Hover fades in and out over this long, ease-out.
-const HOVER_SECS: f32 = 0.18;
+pub(crate) const HOVER_SECS: f32 = 0.18;
 /// Keep the last category this long after the pointer leaves the legend and the bar.
 /// A move into another category inside the window goes straight across, with no default line in between.
-const HOVER_GRACE: f32 = 0.14;
+pub(crate) const HOVER_GRACE: f32 = 0.14;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Readout {
@@ -39,6 +40,22 @@ pub enum Readout {
     Hover,
     Quiet,
     Notice(String),
+}
+
+/// The card's two views: the whole disk, and what developer tools hold with commands to clean them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tab {
+    Overview,
+    Developer,
+}
+
+impl Tab {
+    pub fn key(self) -> &'static str {
+        match self {
+            Tab::Overview => "overview",
+            Tab::Developer => "developer",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,7 +109,7 @@ pub struct Crossfade<T: Clone> {
 const SLIDE: f32 = 3.0;
 
 impl<T: Clone> Crossfade<T> {
-    fn new(base: T) -> Self {
+    pub(crate) fn new(base: T) -> Self {
         Self { base, incoming: None, mix: 1.0, from: 0.0, goal: 1.0, elapsed: 0.0, primed: false }
     }
 
@@ -104,7 +121,7 @@ impl<T: Clone> Crossfade<T> {
         (SLIDE * (1.0 - self.mix), -SLIDE * self.mix)
     }
 
-    fn step<K: PartialEq>(&mut self, next: T, key: impl Fn(&T) -> K, dt: f32) -> bool {
+    pub(crate) fn step<K: PartialEq>(&mut self, next: T, key: impl Fn(&T) -> K, dt: f32) -> bool {
         if !self.primed {
             self.base = next;
             self.primed = true;
@@ -221,6 +238,9 @@ pub struct State {
     sig: u64,
     shared: Arc<Shared>,
     waker: Option<Waker>,
+    pub tab: Tab,
+    /// The developer tools tab: its measurement, bar, hover, open family and selected item.
+    pub dev: devtools::tab::DevTab,
 }
 
 impl State {
@@ -261,6 +281,8 @@ impl State {
             sig: 0,
             shared: Arc::new(Shared::new()),
             waker: None,
+            tab: Tab::Overview,
+            dev: devtools::tab::DevTab::new(demo),
         }
     }
 
@@ -287,6 +309,13 @@ impl State {
         self.pin_scan = Some(99.0);
         self.settled = true;
     }
+
+    /// The developer tools tab with the demo measurement already finished.
+    pub fn scene_developer(&mut self) {
+        self.pin_scan = Some(99.0);
+        self.tab = Tab::Developer;
+        self.dev.finished_demo();
+    }
 }
 
 pub fn demo_mode() -> bool {
@@ -299,6 +328,7 @@ pub fn demo_mode() -> bool {
 
 pub fn setup(s: &mut State, waker: Waker) {
     s.waker = Some(waker.clone());
+    s.dev.waker = Some(waker.clone());
     if !s.demo {
         scan::spawn(s.shared.clone(), waker);
     }
@@ -391,7 +421,24 @@ pub fn burn_area(s: &State) -> Option<(bar::Edge, f32)> {
     (edge.w > 1.0 && envelope > 0.0).then_some((edge, envelope as f32))
 }
 
+/// Switch views. The developer measurement starts the first time its tab opens, so launching
+/// the app doesn't walk the disk twice.
+pub fn press_tab(s: &mut State, tab: Tab) {
+    if s.tab == tab {
+        return;
+    }
+    s.tab = tab;
+    s.hit = None;
+    if tab == Tab::Developer {
+        s.dev.open();
+    }
+}
+
 pub fn press_rescan(s: &mut State) {
+    if s.tab == Tab::Developer {
+        s.dev.rescan();
+        return;
+    }
     s.scan_epoch = s.t;
     s.pin_scan = None;
     s.clear_origin = None;
@@ -511,6 +558,7 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     // invisible old action can remain over the new footer once all motion stops.
     let finishing_transition = s.status_fade.incoming.is_some() || s.footer_fade.incoming.is_some();
     let hover_moving = step_hover(s, visual_dt);
+    let dev_moving = s.dev.step(s.t, dt, visual_dt, s.capacity);
     let status_moving = s.status_fade.step(status_snap(s), |snap| snap.id.clone(), visual_dt);
     let footer_moving = s.footer_fade.step(footer_snap(s), |snap| snap.clone(), visual_dt);
     bar::render(
@@ -524,7 +572,7 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     if std::env::var_os("HOVER_TRACE").is_some() {
         trace_hover(s);
     }
-    s.scanning || clearing || emptying || drift || hover_holding || hover_moving || status_moving || footer_moving || finishing_transition || (!s.demo && !s.real_done)
+    s.scanning || clearing || emptying || drift || hover_holding || hover_moving || status_moving || footer_moving || finishing_transition || dev_moving || (!s.demo && !s.real_done)
 }
 
 /// Hold the current category across a short gap. Entering another category inside the grace
@@ -533,6 +581,14 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
 fn settle_hover(s: &mut State, dt: f32) -> bool {
     if s.confirm.is_some() {
         return false;
+    }
+    if s.tab != Tab::Overview {
+        // The legend and the bar aren't on screen, so nothing is hovered.
+        let changed = s.hover.is_some();
+        s.hover = None;
+        s.leaving = false;
+        s.leave_elapsed = 0.0;
+        return changed;
     }
     let under = match s.pointer {
         Some((x, y)) => category_at(x, y, &s.live, s.capacity),
@@ -624,7 +680,7 @@ fn step_hover(s: &mut State, dt: f32) -> bool {
 }
 
 /// Ease-out quadratic: fast at the start, settled at the end.
-fn ease_out(t: f32) -> f32 {
+pub(crate) fn ease_out(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     1.0 - (1.0 - t) * (1.0 - t)
 }
@@ -659,7 +715,7 @@ fn apply_real(s: &mut State, snap: &Snap, clear_age: Option<f64>, trash_age: Opt
     }
 }
 
-fn smooth(cur: f64, target: f64, dt: f64) -> f64 {
+pub(crate) fn smooth(cur: f64, target: f64, dt: f64) -> f64 {
     if dt <= 0.0 {
         return cur;
     }
@@ -1043,6 +1099,29 @@ mod tests {
         assert_eq!(s.hover_amt[Cat::Photos.ix()], 1.0);
         assert_eq!(s.hover_amt[Cat::Apps.ix()], 0.0);
         assert!(s.status_fade.incoming.is_none());
+    }
+
+    #[test]
+    fn the_developer_tab_clears_overview_hover_and_rescans_only_itself() {
+        let mut s = idle_state();
+        s.pin_scan = Some(99.0);
+        let mut tx = Tx::default();
+        let (x, y, w, h) = legend_hit_rect(0, 0);
+        s.pointer = Some((x + w * 0.5, y + h * 0.5));
+        for frame in 1..=20 {
+            poll(&mut s, frame as f64 / 60.0, &mut tx);
+        }
+        assert_eq!(s.hover, Some(Cat::Apps));
+        press_tab(&mut s, Tab::Developer);
+        assert!(poll(&mut s, 1.0, &mut tx), "the developer measurement starts");
+        assert_eq!(s.hover, None, "the legend under the pointer isn't on this tab");
+        assert!(s.dev.measuring());
+
+        let epoch = s.scan_epoch;
+        press_rescan(&mut s);
+        poll(&mut s, 2.0, &mut tx);
+        assert_eq!(s.scan_epoch, epoch, "Rescan on this tab leaves the disk scan alone");
+        assert!(s.dev.measuring());
     }
 
     fn drive(s: &mut State, dt: f32) {

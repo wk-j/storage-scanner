@@ -1,12 +1,14 @@
-//! The single card: total, scanning line, dot-matrix bar, legend, and the clear action.
+//! The single card: total, tabs, scanning line, dot-matrix bar, legend, and the clear action.
+//! The developer tools tab draws its own body (`devtools::view`) under the same header.
 
 use rune::color::Color;
 use rune::{Cursor, Cx, El, Shape, TextStyle, col, el, row, spacer, text};
 
 use crate::bar;
 use crate::demo;
+use crate::devtools;
 use crate::icons;
-use crate::model::{self, Crossfade, Footer, FooterSnap, State, StatusId, StatusSnap, BAR_Y, CARD_H, CARD_W, DIVIDER_Y, HEADER_Y, LEGEND_Y, PAD_X, STATUS_Y};
+use crate::model::{self, Crossfade, Footer, FooterSnap, State, StatusId, StatusSnap, Tab, BAR_Y, CARD_H, CARD_W, DIVIDER_Y, HEADER_Y, LEGEND_Y, PAD_X, STATUS_Y};
 use crate::scan::Cat;
 
 pub fn view(s: &State, _: &mut Cx<State>) -> El {
@@ -18,21 +20,25 @@ pub fn view(s: &State, _: &mut Cx<State>) -> El {
 }
 
 fn card(s: &State) -> El {
-    let mut card = el()
-        .key("card")
-        .w_full()
-        .h_full()
-        .fill(c(0x17181b))
-        .child(pixels(s))
-        .child(burning(s))
-        .child(header(s))
-        .child(status(s))
-        .child(legend(s))
-        .child(el().absolute(0.0, DIVIDER_Y).size(CARD_W, 1.0).fill(ca(0xffffff, 0.08)))
-        .child(footer(s));
-    card = hover_targets(card, s);
-    if s.confirm.is_some() {
-        card = card.child(confirm(s));
+    let mut card = el().key("card").w_full().h_full().fill(c(0x17181b));
+    match s.tab {
+        Tab::Overview => {
+            card = card
+                .child(pixels(s))
+                .child(burning(s))
+                .child(header(s))
+                .child(status(s))
+                .child(legend(s))
+                .child(el().absolute(0.0, DIVIDER_Y).size(CARD_W, 1.0).fill(ca(0xffffff, 0.08)))
+                .child(footer(s));
+            card = hover_targets(card, s);
+            if s.confirm.is_some() {
+                card = card.child(confirm(s));
+            }
+        }
+        Tab::Developer => {
+            card = devtools::view::body(card.child(header(s)), s);
+        }
     }
     if rune::is_headless() {
         if let Some((x, y)) = s.pointer {
@@ -97,16 +103,23 @@ fn hover_targets(mut card: El, s: &State) -> El {
 }
 
 fn header(s: &State) -> El {
-    let total = demo::sum(&s.live);
-    let cap = if s.capacity > 0.0 {
-        format!("of {} GB used", demo::fmt_cap(s.capacity))
-    } else {
-        "of … GB used".into()
+    let (total, cap) = match s.tab {
+        Tab::Overview => {
+            let cap = if s.capacity > 0.0 {
+                format!("of {} GB used", demo::fmt_cap(s.capacity))
+            } else {
+                "of … GB used".into()
+            };
+            (demo::sum(&s.live), cap)
+        }
+        // Counts up while measuring, as the overview's total does while scanning.
+        Tab::Developer => (s.dev.total(), "in developer tools".into()),
     };
     row().absolute(PAD_X, HEADER_Y).size(bar::BAR_W, 44.0).items_end()
         .child(label(format!("{} GB", demo::fmt_gb(total)), 34.0, 500.0, 0xf5f6f8))
         .child(label(cap, 20.0, 400.0, 0x8e9099).mb(6.0).ml(12.0))
         .child(spacer())
+        .child(tabs(s).mr(10.0))
         .child(
             row().key("rescan").role("button").label("Rescan").h(32.0).px(10.0).gap(6.0).center().self_center()
                 .radius(8.0)
@@ -116,6 +129,23 @@ fn header(s: &State) -> El {
                 .child(icons::rescan(21.0))
                 .child(label("Rescan", 19.0, 400.0, 0xa5a7b0)),
         )
+}
+
+fn tabs(s: &State) -> El {
+    row().key("tabs").role("tablist").h(36.0).padding(3.0).gap(2.0).radius(10.0).self_center()
+        .fill(ca(0xffffff, 0.04))
+        .border(1.0, ca(0xffffff, 0.07))
+        .child(tab(s, Tab::Overview, "Overview"))
+        .child(tab(s, Tab::Developer, "Developer tools"))
+}
+
+fn tab(s: &State, which: Tab, name: &'static str) -> El {
+    let on = s.tab == which;
+    let button = row().key(format!("tab-{}", which.key())).role("tab").label(name).h(28.0).px(12.0).radius(7.0).center()
+        .cursor(Cursor::Pointer)
+        .on_press(move |st: &mut State| model::press_tab(st, which))
+        .child(label(name, 16.0, if on { 500.0 } else { 400.0 }, if on { 0xf4f5f7 } else { 0x8e9099 }));
+    if on { button.fill(ca(0xffffff, 0.11)) } else { button.hover(ca(0xffffff, 0.05)) }
 }
 
 fn status(s: &State) -> El {
@@ -191,7 +221,7 @@ fn footer_line(snap: &FooterSnap) -> El {
 }
 
 /// Overlapping copies of a line. The outgoing one rises a few pixels as it fades; the incoming one settles down into place.
-fn stack<T: Clone>(host: El, fade: &Crossfade<T>, _w: f32, _h: f32, draw: fn(&T) -> El) -> El {
+pub(crate) fn stack<T: Clone>(host: El, fade: &Crossfade<T>, _w: f32, _h: f32, draw: fn(&T) -> El) -> El {
     if let Some(inc) = &fade.incoming {
         let (inc_dy, base_dy) = fade.slide();
         let base_op = (1.0 - fade.mix).clamp(0.0, 1.0);
@@ -255,14 +285,14 @@ fn confirm(s: &State) -> El {
     )
 }
 
-fn label(value: impl AsRef<str>, size: f32, weight: f32, color: u32) -> El {
+pub(crate) fn label(value: impl AsRef<str>, size: f32, weight: f32, color: u32) -> El {
     text(value.as_ref()).font(TextStyle::new(size, weight)).color(c(color))
 }
 
-fn c(hex: u32) -> Color {
+pub(crate) fn c(hex: u32) -> Color {
     rune::color::hex(&format!("#{hex:06x}")).expect("hex colour")
 }
 
-fn ca(hex: u32, alpha: f32) -> Color {
+pub(crate) fn ca(hex: u32, alpha: f32) -> Color {
     c(hex).alpha(alpha)
 }
