@@ -14,7 +14,7 @@ The fire effect from UI Lab burns the Trash area after confirmation. Cancel leav
 
 [Watch the 60 fps MP4](fire-clear.mp4).
 
-The clip uses the demo disk and is recorded with the headless renderer (`--demo --script scripts/design-qa.json --video docs/fire-clear.mp4`).
+The clip uses the demo disk and is recorded with the headless renderer (`--demo --scene idle --scale 1 --fps 60 --script scripts/design-qa.json --video docs/fire-clear.mp4`).
 
 ## How files are counted
 

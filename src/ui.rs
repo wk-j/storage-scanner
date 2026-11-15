@@ -8,7 +8,7 @@ use crate::bar;
 use crate::demo;
 use crate::devtools;
 use crate::icons;
-use crate::model::{self, Crossfade, Footer, FooterSnap, State, StatusId, StatusSnap, Tab, BAR_Y, CARD_H, CARD_W, DIVIDER_Y, HEADER_Y, LEGEND_Y, PAD_X, STATUS_Y};
+use crate::model::{self, Crossfade, Footer, FooterSnap, State, StatusId, StatusSnap, Tab, BAR_Y, CARD_H, CARD_W, DIVIDER_Y, HEADER_Y, LEGEND_GAP_X, LEGEND_GAP_Y, LEGEND_ROW, LEGEND_Y, PAD_X, STATUS_Y};
 use crate::scan::Cat;
 
 pub fn view(s: &State, _: &mut Cx<State>) -> El {
@@ -89,14 +89,20 @@ fn hover_targets(mut card: El, s: &State) -> El {
             let cat = model::LEGEND[row][col];
             card = card.child(
                 el().absolute(x, y).size(w, h).hit().cursor(Cursor::Pointer)
-                    .on_hover_change(move |st: &mut State, inside, _| model::note_hit(st, cat, inside)),
+                    .on_hover_change(move |st: &mut State, inside, tx| {
+                        model::note_hit(st, cat, inside);
+                        model::repoll(tx);
+                    }),
             );
         }
     }
     for (cat, x0, x1) in model::bar_hit_spans(&s.live, s.capacity) {
         card = card.child(
             el().absolute(x0, BAR_Y).size((x1 - x0).max(1.0), bar::BAR_H).hit().cursor(Cursor::Pointer)
-                .on_hover_change(move |st: &mut State, inside, _| model::note_hit(st, cat, inside)),
+                .on_hover_change(move |st: &mut State, inside, tx| {
+                    model::note_hit(st, cat, inside);
+                    model::repoll(tx);
+                }),
         );
     }
     card
@@ -115,24 +121,27 @@ fn header(s: &State) -> El {
         // Counts up while measuring, as the overview's total does while scanning.
         Tab::Developer => (s.dev.total(), "in developer tools".into()),
     };
-    row().absolute(PAD_X, HEADER_Y).size(bar::BAR_W, 44.0).items_end()
-        .child(label(format!("{} GB", demo::fmt_gb(total)), 34.0, 500.0, 0xf5f6f8))
-        .child(label(cap, 20.0, 400.0, 0x8e9099).mb(6.0).ml(12.0))
+    row().absolute(PAD_X, HEADER_Y).size(bar::BAR_W, 34.0).items_end()
+        .child(label(format!("{} GB", demo::fmt_gb(total)), 26.0, 500.0, 0xf5f6f8))
+        .child(label(cap, 15.0, 400.0, 0x8e9099).mb(4.0).ml(9.0))
         .child(spacer())
-        .child(tabs(s).mr(10.0))
+        .child(tabs(s).mr(8.0))
         .child(
-            row().key("rescan").role("button").label("Rescan").h(32.0).px(10.0).gap(6.0).center().self_center()
-                .radius(8.0)
+            row().key("rescan").role("button").label("Rescan").h(26.0).px(8.0).gap(5.0).center().self_center()
+                .radius(6.0)
                 .cursor(Cursor::Pointer)
                 .hover(ca(0xffffff, 0.06))
-                .on_press(model::press_rescan)
-                .child(icons::rescan(21.0))
-                .child(label("Rescan", 19.0, 400.0, 0xa5a7b0)),
+                .on_press_tx(|st: &mut State, tx| {
+                    model::press_rescan(st);
+                    model::repoll(tx);
+                })
+                .child(icons::rescan(15.0))
+                .child(label("Rescan", 14.0, 400.0, 0xa5a7b0)),
         )
 }
 
 fn tabs(s: &State) -> El {
-    row().key("tabs").role("tablist").h(36.0).padding(3.0).gap(2.0).radius(10.0).self_center()
+    row().key("tabs").role("tablist").h(28.0).padding(3.0).gap(2.0).radius(8.0).self_center()
         .fill(ca(0xffffff, 0.04))
         .border(1.0, ca(0xffffff, 0.07))
         .child(tab(s, Tab::Overview, "Overview"))
@@ -141,40 +150,43 @@ fn tabs(s: &State) -> El {
 
 fn tab(s: &State, which: Tab, name: &'static str) -> El {
     let on = s.tab == which;
-    let button = row().key(format!("tab-{}", which.key())).role("tab").label(name).h(28.0).px(12.0).radius(7.0).center()
+    let button = row().key(format!("tab-{}", which.key())).role("tab").label(name).h(22.0).px(9.0).radius(5.0).center()
         .cursor(Cursor::Pointer)
-        .on_press(move |st: &mut State| model::press_tab(st, which))
-        .child(label(name, 16.0, if on { 500.0 } else { 400.0 }, if on { 0xf4f5f7 } else { 0x8e9099 }));
+        .on_press_tx(move |st: &mut State, tx| {
+            model::press_tab(st, which);
+            model::repoll(tx);
+        })
+        .child(label(name, 13.0, if on { 500.0 } else { 400.0 }, if on { 0xf4f5f7 } else { 0x8e9099 }));
     if on { button.fill(ca(0xffffff, 0.11)) } else { button.hover(ca(0xffffff, 0.05)) }
 }
 
 fn status(s: &State) -> El {
-    let slot = el().absolute(PAD_X, STATUS_Y).size(bar::BAR_W, 28.0);
-    stack(slot, &s.status_fade, bar::BAR_W, 24.0, status_line)
+    let slot = el().absolute(PAD_X, STATUS_Y).size(bar::BAR_W, 22.0);
+    stack(slot, &s.status_fade, bar::BAR_W, 20.0, status_line)
 }
 
 fn status_line(snap: &StatusSnap) -> El {
     match snap.id {
-        StatusId::Quiet => row().size(bar::BAR_W, 24.0).center_y().child(label(&snap.title, 19.0, 400.0, 0x8e9099)),
-        StatusId::Notice => row().size(bar::BAR_W, 24.0).center_y().child(label(&snap.title, 19.0, 400.0, 0xe7b4ae)),
-        StatusId::Calculating | StatusId::Clearing | StatusId::Emptying => row().size(bar::BAR_W, 24.0).gap(8.0).center_y()
-            .child(label(&snap.title, 19.0, 400.0, 0xc8cad1))
-            .child(text(snap.detail.clone()).font(TextStyle::new(17.0, 400.0).mono()).color(c(0x8b8d96))),
+        StatusId::Quiet => row().size(bar::BAR_W, 20.0).center_y().child(label(&snap.title, 14.0, 400.0, 0x8e9099)),
+        StatusId::Notice => row().size(bar::BAR_W, 20.0).center_y().child(label(&snap.title, 14.0, 400.0, 0xe7b4ae)),
+        StatusId::Calculating | StatusId::Clearing | StatusId::Emptying => row().size(bar::BAR_W, 20.0).gap(6.0).center_y()
+            .child(label(&snap.title, 14.0, 400.0, 0xc8cad1))
+            .child(text(snap.detail.clone()).font(TextStyle::new(12.5, 400.0).mono()).color(c(0x8b8d96))),
         StatusId::Hover(_) => {
             let cat = snap.cat.unwrap_or(Cat::Apps);
-            row().size(bar::BAR_W, 24.0).gap(8.0).center_y()
-                .child(icons::category(cat, 20.0))
-                .child(label(&snap.title, 19.0, 450.0, 0xf4f5f7))
-                .child(label(&snap.detail, 19.0, 400.0, 0xb4b6be))
-                .child(label(&snap.blurb, 19.0, 400.0, 0x8e9099).shrink())
+            row().size(bar::BAR_W, 20.0).gap(6.0).center_y()
+                .child(icons::category(cat, 15.0))
+                .child(label(&snap.title, 14.0, 450.0, 0xf4f5f7))
+                .child(label(&snap.detail, 14.0, 400.0, 0xb4b6be))
+                .child(label(&snap.blurb, 14.0, 400.0, 0x8e9099).shrink())
         }
     }
 }
 
 fn legend(s: &State) -> El {
-    let mut list = col().absolute(PAD_X, LEGEND_Y).size(bar::BAR_W, model::LEGEND_H).gap(6.0);
+    let mut list = col().absolute(PAD_X, LEGEND_Y).size(bar::BAR_W, model::LEGEND_H).gap(LEGEND_GAP_Y);
     for group in model::LEGEND {
-        let mut line = row().w_full().h(40.0).gap(16.0);
+        let mut line = row().w_full().h(LEGEND_ROW).gap(LEGEND_GAP_X);
         for cat in group {
             line = line.child(cell(s, cat).grow(1.0));
         }
@@ -188,12 +200,12 @@ fn cell(s: &State, cat: Cat) -> El {
     // Other rows fade while this one's highlight eases in. A hair of fill keeps the row hittable at rest.
     let bg = 0.001 + 0.074 * mine;
     let fade = 1.0 - 0.42 * others;
-    row().key(format!("cat-{}", cat.key())).h(40.0).px(2.0).gap(12.0).center_y().radius(10.0)
+    row().key(format!("cat-{}", cat.key())).h(LEGEND_ROW).px(2.0).gap(9.0).center_y().radius(7.0)
         .fill(ca(0xffffff, bg))
-        .child(icons::category(cat, 22.0).opacity(fade))
-        .child(label(cat.name(), 19.0, 400.0, 0xf3f4f6).opacity(fade))
+        .child(icons::category(cat, 16.0).opacity(fade))
+        .child(label(cat.name(), 14.0, 400.0, 0xf3f4f6).opacity(fade))
         .child(spacer())
-        .child(label(format!("{} GB", demo::fmt_gb(s.live[cat.ix()])), 19.0, 400.0, 0x8d8f98).opacity(fade))
+        .child(label(format!("{} GB", demo::fmt_gb(s.live[cat.ix()])), 14.0, 400.0, 0x8d8f98).opacity(fade))
 }
 
 fn footer(s: &State) -> El {
@@ -204,14 +216,14 @@ fn footer(s: &State) -> El {
 
 fn footer_line(snap: &FooterSnap) -> El {
     let icon = match snap.kind {
-        Footer::Scanning => icons::sparkle(20.0, 0x9aa0aa),
-        Footer::Caches => icons::category(Cat::Caches, 22.0),
-        Footer::Trash => icons::category(Cat::Trash, 22.0),
-        Footer::Done => icons::sparkle(20.0, 0x8fd9b0),
+        Footer::Scanning => icons::sparkle(15.0, 0x9aa0aa),
+        Footer::Caches => icons::category(Cat::Caches, 16.0),
+        Footer::Trash => icons::category(Cat::Trash, 16.0),
+        Footer::Done => icons::sparkle(15.0, 0x8fd9b0),
     };
-    let mut line = row().size(CARD_W, CARD_H - DIVIDER_Y - 1.0).px(PAD_X).gap(12.0).center_y()
+    let mut line = row().size(CARD_W, CARD_H - DIVIDER_Y - 1.0).px(PAD_X).gap(9.0).center_y()
         .child(icon)
-        .child(label(&snap.message, 19.0, 400.0, if snap.kind == Footer::Scanning || snap.kind == Footer::Done { 0x9a9ca6 } else { 0xb7b9c0 }).shrink());
+        .child(label(&snap.message, 14.0, 400.0, if snap.kind == Footer::Scanning || snap.kind == Footer::Done { 0x9a9ca6 } else { 0xb7b9c0 }).shrink());
     if let Some(name) = snap.button {
         let press = model::press_trash;
         let key = "empty-trash";
@@ -240,14 +252,17 @@ pub(crate) fn stack<T: Clone>(host: El, fade: &Crossfade<T>, _w: f32, _h: f32, d
 }
 
 fn action(key: &str, name: &str, on_press: fn(&mut State)) -> El {
-    row().key(key).role("button").label(name).h(48.0).px(17.0).radius(11.0).center()
+    row().key(key).role("button").label(name).h(36.0).px(13.0).radius(8.0).center()
         .fill(c(0x2c2e33))
         .hover(c(0x3a3c42))
         .border(1.0, ca(0xffffff, 0.10))
         .cursor(Cursor::Pointer)
         .press_scale(0.97)
-        .on_press(on_press)
-        .child(label(name, 19.0, 450.0, 0xf4f5f7))
+        .on_press_tx(move |st: &mut State, tx| {
+            on_press(st);
+            model::repoll(tx);
+        })
+        .child(label(name, 14.0, 450.0, 0xf4f5f7))
 }
 
 fn confirm(s: &State) -> El {
@@ -263,18 +278,18 @@ fn confirm(s: &State) -> El {
             "Close",
         ),
     };
-    let dialog_w = 540.0;
-    let dialog_h = 230.0;
+    let dialog_w = 420.0;
+    let dialog_h = 180.0;
     el().absolute(0.0, 0.0).size(CARD_W, CARD_H).fill(ca(0x000000, 0.55)).child(
         col().absolute((CARD_W - dialog_w) / 2.0, (CARD_H - dialog_h) / 2.0)
             .size(dialog_w, dialog_h)
-            .padding(22.0)
-            .gap(12.0)
-            .radius(16.0)
+            .padding(18.0)
+            .gap(9.0)
+            .radius(12.0)
             .fill(c(0x222328))
             .border(1.0, ca(0xffffff, 0.10))
-            .child(label(title, 18.0, 650.0, 0xf4f5f7))
-            .child(label(body, 17.0, 400.0, 0xb7b9c0).w_full().wrap())
+            .child(label(title, 15.0, 650.0, 0xf4f5f7))
+            .child(label(body, 13.0, 400.0, 0xb7b9c0).w_full().wrap())
             .child(spacer())
             .child(
                 row().w_full().gap(8.0)

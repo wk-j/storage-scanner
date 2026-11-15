@@ -40,3 +40,7 @@ On Linux the default is the demo: a fixed 512 GB disk (357.8 GB used) and no del
 | After emptying the Trash | `out/after-trash.png` |
 | Developer tools, Rust hovered | `out/dev-tools.png` |
 | Developer tools, a Rust item selected | `out/dev-tools-command.png` |
+
+## App icon
+
+`assets/icon.png` is the Dock and app-switcher icon: the dot-matrix bar on a dark tile. The app sets it when it starts (`rune::set_app_icon`), because Homebrew installs a bare binary with no app bundle to carry one. `python3 scripts/icon.py` draws it again; it needs only the Python standard library.

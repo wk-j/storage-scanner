@@ -1,3 +1,5 @@
+<img src="assets/icon.png" width="96" alt="Storage Scanner icon">
+
 # Storage Scanner
 
 A native disk map, written in Rust with [Rune](https://github.com/anomalyco/rune). Used space is a row of glowing cells, one run per category; free space is the dim grid beside them. A second tab, **Developer tools**, shows what package managers, toolchains and build folders hold, with the command that cleans each one up.

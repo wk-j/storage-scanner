@@ -11,15 +11,20 @@ use crate::demo::{self, Activity};
 use crate::devtools;
 use crate::scan::{self, Cat, N, Purge, Shared, Snap, Stat};
 
-pub const CARD_W: f32 = 960.0;
-pub const CARD_H: f32 = 564.0;
-pub const PAD_X: f32 = 36.0;
-pub const HEADER_Y: f32 = 32.0;
-pub const STATUS_Y: f32 = 88.0;
-pub const BAR_Y: f32 = 148.0;
-pub const LEGEND_Y: f32 = 310.0;
-pub const LEGEND_H: f32 = 132.0;
-pub const DIVIDER_Y: f32 = 468.0;
+pub const CARD_W: f32 = 720.0;
+pub const CARD_H: f32 = 423.0;
+pub const PAD_X: f32 = 28.0;
+pub const HEADER_Y: f32 = 24.0;
+pub const STATUS_Y: f32 = 66.0;
+pub const BAR_Y: f32 = 110.0;
+pub const LEGEND_Y: f32 = 232.0;
+/// Three legend rows of `LEGEND_ROW` with `LEGEND_GAP_Y` between them.
+pub const LEGEND_H: f32 = LEGEND_ROW * 3.0 + LEGEND_GAP_Y * 2.0;
+pub const LEGEND_ROW: f32 = 30.0;
+pub const LEGEND_GAP_Y: f32 = 4.0;
+/// Space between the legend's columns.
+pub const LEGEND_GAP_X: f32 = 12.0;
+pub const DIVIDER_Y: f32 = 351.0;
 /// Legend order, row by row. Hit cells tile this grid with no gaps.
 pub const LEGEND: [[Cat; 3]; 3] = [
     [Cat::Apps, Cat::Developer, Cat::Photos],
@@ -334,6 +339,13 @@ pub fn setup(s: &mut State, waker: Waker) {
     }
 }
 
+/// Asks for the next frame's poll. Input handlers run after the frame's `poll`, so a change they
+/// make to what `poll` steps (the crossfading status line and footer, a measurement to start)
+/// would wait on a resting window until the next input; `poll` asks too while anything moves.
+pub(crate) fn repoll(tx: &mut Tx) {
+    tx.wake_after(std::time::Duration::ZERO);
+}
+
 pub fn set_pointer(s: &mut State, x: f32, y: f32) {
     s.pointer = Some((x, y));
 }
@@ -572,7 +584,14 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     if std::env::var_os("HOVER_TRACE").is_some() {
         trace_hover(s);
     }
-    s.scanning || clearing || emptying || drift || hover_holding || hover_moving || status_moving || footer_moving || finishing_transition || dev_moving || (!s.demo && !s.real_done)
+    let moving = s.scanning || clearing || emptying || drift || hover_holding || hover_moving || status_moving || footer_moving || finishing_transition || dev_moving || (!s.demo && !s.real_done);
+    // Returning true redraws this frame only. Rune draws the next one for its own motion, not
+    // for ours: a crossfade, hover or scan stepped here asks for it, or a resting window leaves
+    // it half done until the pointer moves.
+    if moving {
+        repoll(tx);
+    }
+    moving
 }
 
 /// Hold the current category across a short gap. Entering another category inside the grace
@@ -930,9 +949,9 @@ mod tests {
         let (_, y1, _, _) = legend_hit_rect(1, 0);
         assert!((y0 + h0 - y1).abs() < 1e-4, "legend rows meet");
 
-        // The old layout left a 16px column gap and a 6px row gap. Both are inside a cell now.
-        let gap_x = PAD_X + (bar::BAR_W - 32.0) / 3.0 + 8.0;
-        let gap_y = LEGEND_Y + 40.0 + 3.0;
+        // The visible cells leave a column gap and a row gap. Both are inside a hit cell.
+        let gap_x = PAD_X + (bar::BAR_W - LEGEND_GAP_X * 2.0) / 3.0 + LEGEND_GAP_X * 0.5;
+        let gap_y = LEGEND_Y + LEGEND_ROW + LEGEND_GAP_Y * 0.5;
         assert_eq!(category_at(gap_x, LEGEND_Y + 20.0, &demo::TOTALS, demo::CAPACITY), Some(Cat::Apps));
         assert_eq!(category_at(175.0, gap_y, &demo::TOTALS, demo::CAPACITY), Some(Cat::Apps));
         assert_eq!(category_at(175.0, BAR_Y + bar::BAR_H + 10.0, &demo::TOTALS, demo::CAPACITY), None);
@@ -965,7 +984,7 @@ mod tests {
 
         let mut presence = Vec::new();
         let mut saw_quiet = false;
-        // One step per frame, fast enough to cross the old 16px gap in well under the grace.
+        // One step per frame, fast enough to cross a column gap in well under the grace.
         let y = y + h * 0.5;
         let mut x = PAD_X + 8.0;
         while x < PAD_X + bar::BAR_W - 8.0 {
