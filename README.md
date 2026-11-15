@@ -12,6 +12,18 @@ The fire effect from UI Lab burns the Trash area after confirmation. Cancel leav
 
 [Watch the 60 fps MP4](docs/fire-clear.mp4).
 
+## Install with Homebrew
+
+On macOS this repository is its own Homebrew tap. There is no tagged release yet, so the formula builds the `main` branch from source with Homebrew's Rust:
+
+```sh
+brew tap wk-j/storage-scanner https://github.com/wk-j/storage-scanner
+brew install --HEAD wk-j/storage-scanner/storage-scanner
+storage-scanner
+```
+
+`brew upgrade --fetch-HEAD wk-j/storage-scanner/storage-scanner` rebuilds from the latest `main`. `brew uninstall storage-scanner` and `brew untap wk-j/storage-scanner` remove it. The formula is `Formula/storage-scanner.rb`.
+
 ## Build and run
 
 Rust 1.85 or newer (edition 2024). The window uses Metal on macOS and Vulkan or DX12 elsewhere. A machine with no GPU can render through Lavapipe:
