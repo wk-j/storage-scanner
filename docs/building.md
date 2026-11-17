@@ -2,7 +2,7 @@
 
 ## Install with Homebrew
 
-The formula is in [wk-j/homebrew-tap](https://github.com/wk-j/homebrew-tap). It builds the latest release (v0.2.0) from source with Homebrew's Rust:
+The formula is in [wk-j/homebrew-tap](https://github.com/wk-j/homebrew-tap). It builds the latest release (v0.3.0) from source with Homebrew's Rust:
 
 ```sh
 brew install wk-j/tap/storage-scanner           # latest tagged release
@@ -13,7 +13,6 @@ storage-scanner                                 # opens the window
 `brew upgrade storage-scanner` picks up a newer release once the tap's formula points at it.
 
 ## macOS desktop application
-
 
 Build a Finder-launchable app on macOS with Rust/Cargo and the Xcode Command Line
 Tools (`xcode-select --install`). Use a current stable Rust toolchain: edition 2024
