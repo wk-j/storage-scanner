@@ -6,16 +6,16 @@ use rune::Pixels;
 
 use crate::scan::N;
 
-pub const BAR_W: f32 = 888.0;
-pub const BAR_H: f32 = 132.0;
-pub const BLEED_X: f32 = 36.0;
-pub const BLEED_TOP: f32 = 86.0;
+pub const BAR_W: f32 = 664.0;
+pub const BAR_H: f32 = 98.0;
+pub const BLEED_X: f32 = 28.0;
+pub const BLEED_TOP: f32 = 64.0;
 
 const SS: u32 = 2;
 const PITCH: f32 = 6.0;
 const CELL: f32 = 4.0;
 const INSET: f32 = 2.0;
-const RADIUS: f32 = 14.0;
+const RADIUS: f32 = 11.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Edge {

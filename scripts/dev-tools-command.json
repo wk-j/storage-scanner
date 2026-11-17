@@ -1,0 +1,7 @@
+{
+  "events": [
+    {"t": 0.20, "type": "move", "key": "dev-group-rust"},
+    {"t": 0.40, "type": "tap", "key": "dev-group-rust"},
+    {"t": 1.00, "type": "tap", "key": "dev-item-proj:~/proj/storage/target"}
+  ]
+}
